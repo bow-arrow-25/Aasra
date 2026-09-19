@@ -34,3 +34,39 @@ export function silentWavDataUrl(durationSec = 2) {
   }
   return `data:audio/wav;base64,${btoa(binary)}`;
 }
+
+export function startSoftChime(intervalMs = 3000) {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return () => {};
+
+  let ctx = null;
+  function ding() {
+    try {
+      if (!ctx) ctx = new AudioContextClass();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 523.25;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.07, ctx.currentTime + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.7);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.72);
+    } catch {
+      /* autoplay or unsupported */
+    }
+  }
+
+  ding();
+  const timer = window.setInterval(ding, intervalMs);
+  return () => {
+    window.clearInterval(timer);
+    try {
+      ctx?.close();
+    } catch {
+      /* ignore */
+    }
+  };
+}

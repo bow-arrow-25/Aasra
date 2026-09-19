@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Mic, Square } from "lucide-react";
 import { useGlobalState } from "../context/GlobalState";
 
 const MAX_SECONDS = 30;
@@ -211,7 +212,9 @@ export default function VoiceRecorder({ from, labels = {} }) {
         aria-label={recording ? copy.stop : copy.idle}
         aria-pressed={recording}
       >
-        <span aria-hidden="true">{recording ? "■" : "●"}</span>
+        <span aria-hidden="true">
+          {recording ? <Square className="size-5 fill-current" /> : <Mic className="size-5" />}
+        </span>
         <span>
           {recording
             ? `${copy.recording} ${seconds}s / ${MAX_SECONDS}s`

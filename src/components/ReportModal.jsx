@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Copy, Download, ExternalLink, Phone, X } from "lucide-react";
 import { useGlobalState } from "../context/GlobalState";
 
 const MISSING = "Not recorded";
@@ -46,7 +47,7 @@ function extractCallType(event) {
   if (event?.kind === "SCAM_CALL") return "Suspected scam call";
   if (event?.kind === "CALL_ALARM") return "Long-call alarm";
   if (event?.kind === "CALL") return "Incoming call";
-  if (event?.kind === "UPI" || event?.kind === "UPI_REJECT") {
+  if (event?.kind === "UPI" || event?.kind === "UPI_REJECT" || event?.kind === "UPI_COLLECT") {
     return "Not a call — UPI payment";
   }
   return MISSING;
@@ -149,10 +150,10 @@ export default function ReportModal({ event, victimName, onClose }) {
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg px-3 py-1 text-sm text-slate-500 hover:bg-slate-100"
+            className="rounded-lg p-1 text-slate-500 hover:bg-slate-100"
             aria-label="Close 1930 report"
           >
-            Close
+            <X className="size-5" />
           </button>
         </div>
 
@@ -168,29 +169,33 @@ export default function ReportModal({ event, victimName, onClose }) {
           <button
             type="button"
             onClick={handleCopy}
-            className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white"
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white"
           >
+            <Copy className="size-4" aria-hidden="true" />
             Copy report
           </button>
           <a
             href="tel:1930"
-            className="rounded-lg bg-red-600 px-4 py-2.5 text-center text-sm font-semibold text-white"
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-center text-sm font-semibold text-white"
           >
+            <Phone className="size-4" aria-hidden="true" />
             Call 1930
           </a>
           <a
             href="https://www.cybercrime.gov.in"
             target="_blank"
             rel="noopener noreferrer"
-            className="rounded-lg bg-teal px-4 py-2.5 text-center text-sm font-semibold text-cream"
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-teal px-4 py-2.5 text-center text-sm font-semibold text-cream"
           >
+            <ExternalLink className="size-4" aria-hidden="true" />
             Open cybercrime.gov.in
           </a>
           <button
             type="button"
             onClick={handleDownload}
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-semibold"
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-semibold"
           >
+            <Download className="size-4" aria-hidden="true" />
             Download as .txt
           </button>
         </div>

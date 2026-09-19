@@ -1,0 +1,46 @@
+{
+  "rules": {
+    "demoInbox": {
+      ".read": "auth != null",
+      "sms": {
+        ".write": true,
+        "$id": {
+          ".validate": "newData.hasChildren(['sender', 'body']) && newData.child('sender').isString() && newData.child('body').isString() && newData.child('body').val().length < 2000"
+        }
+      },
+      "calls": {
+        ".write": true,
+        "$id": {
+          ".validate": "newData.hasChildren(['number']) && newData.child('number').isString() && newData.child('number').val().length < 48"
+        }
+      }
+    },
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "pairingCodes": {
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() || data.val() === newData.val() || root.child('households').child(data.val()).child('members').child(auth.uid).exists())"
+      }
+    },
+    "households": {
+      "$hid": {
+        ".read": "auth != null && data.child('members').child(auth.uid).exists()",
+        ".write": "auth != null && (!data.exists() && newData.child('members').child(auth.uid).exists() || data.child('members').child(auth.uid).exists() || newData.child('members').child(auth.uid).exists())",
+        "members": {
+          "$uid": {
+            ".write": "auth != null && (auth.uid === $uid || data.parent().parent().child('members').child(auth.uid).child('role').val() === 'family')"
+          }
+        },
+        "actions": {
+          ".read": "auth != null && data.parent().child('members').child(auth.uid).exists()",
+          ".write": "auth != null && (data.parent().child('members').child(auth.uid).exists() || newData.parent().child('members').child(auth.uid).exists())"
+        }
+      }
+    }
+  }
+}

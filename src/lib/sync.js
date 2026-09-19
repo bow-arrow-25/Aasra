@@ -1,13 +1,5 @@
-import { initializeApp, getApps } from "firebase/app";
-import {
-  getDatabase,
-  ref,
-  push,
-  get,
-  onChildAdded,
-  off,
-  remove,
-} from "firebase/database";
+import { get, off, onChildAdded, push, ref, remove } from "firebase/database";
+import { getFirebaseDb, hasFirebaseConfig } from "./firebase";
 
 function readSession(key) {
   try {
@@ -37,18 +29,14 @@ const clientId = createClientId();
 
 let mode = "broadcast";
 let currentRoom = "";
+let currentHousehold = "";
 let channel = null;
 let actionsRef = null;
-let roomRef = null;
+let householdRef = null;
 let childAddedUnsub = null;
 let actionLog = [];
 
-export function hasFirebaseConfig() {
-  return Boolean(
-    import.meta.env.VITE_FIREBASE_API_KEY &&
-      import.meta.env.VITE_FIREBASE_DATABASE_URL
-  );
-}
+export { hasFirebaseConfig };
 
 export function getClientId() {
   return clientId;
@@ -62,23 +50,6 @@ export function createRoomCode() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-function firebaseConfig() {
-  return {
-    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-    databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL,
-    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-    appId: import.meta.env.VITE_FIREBASE_APP_ID,
-  };
-}
-
-function getDb() {
-  const app = getApps()[0] || initializeApp(firebaseConfig());
-  return getDatabase(app);
-}
-
 function stripUndefined(value) {
   return JSON.parse(JSON.stringify(value));
 }
@@ -89,19 +60,20 @@ function disconnect() {
   }
   childAddedUnsub = null;
   actionsRef = null;
-  roomRef = null;
+  householdRef = null;
   if (channel) {
     channel.close();
     channel = null;
   }
   currentRoom = "";
+  currentHousehold = "";
   actionLog = [];
 }
 
-function connectFirebase(roomCode, onRemoteAction) {
-  const db = getDb();
-  roomRef = ref(db, `rooms/${roomCode}`);
-  actionsRef = ref(db, `rooms/${roomCode}/actions`);
+function connectFirebase(householdId, onRemoteAction) {
+  const db = getFirebaseDb();
+  householdRef = ref(db, `households/${householdId}`);
+  actionsRef = ref(db, `households/${householdId}/actions`);
   const applied = new Set();
 
   function applySnap(snap, { live }) {
@@ -125,13 +97,14 @@ function connectFirebase(roomCode, onRemoteAction) {
     .catch((error) => {
       console.warn("Firebase sync failed, falling back to BroadcastChannel", error);
       mode = "broadcast";
-      return connectBroadcast(roomCode, onRemoteAction);
+      return connectBroadcast(currentRoom || householdId, onRemoteAction);
     });
 }
 
 function connectBroadcast(roomCode, onRemoteAction) {
   actionLog = [];
-  channel = new BroadcastChannel(`aasra-room-${roomCode}`);
+  const channelName = `aasra-room-${roomCode}`;
+  channel = new BroadcastChannel(channelName);
   channel.onmessage = (event) => {
     const data = event.data;
     if (!data) return;
@@ -157,26 +130,28 @@ function connectBroadcast(roomCode, onRemoteAction) {
   channel.postMessage({ kind: "HELLO", clientId });
 }
 
-export function connect(roomCode, onRemoteAction) {
+export function connect({ householdId, roomCode } = {}, onRemoteAction) {
   disconnect();
-  currentRoom = String(roomCode || "").replace(/\D/g, "").slice(0, 6);
-  if (!currentRoom) return () => {};
+  const code = String(roomCode || "").replace(/\D/g, "").slice(0, 6);
+  currentRoom = code;
+  currentHousehold = String(householdId || code || "");
+  if (!currentHousehold) return () => {};
 
-  if (hasFirebaseConfig()) {
+  if (hasFirebaseConfig() && householdId) {
     mode = "firebase";
-    connectFirebase(currentRoom, onRemoteAction);
+    connectFirebase(householdId, onRemoteAction);
   } else {
     mode = "broadcast";
-    connectBroadcast(currentRoom, onRemoteAction);
+    connectBroadcast(code || currentHousehold, onRemoteAction);
   }
 
   return () => {
-    if (currentRoom === roomCode) disconnect();
+    if (currentHousehold === (householdId || code)) disconnect();
   };
 }
 
 export function publish(action) {
-  if (!action?.type || !currentRoom) return;
+  if (!action?.type || !currentHousehold) return;
   const payload = stripUndefined({
     ...action,
     clientId,
@@ -195,14 +170,14 @@ export function publish(action) {
 }
 
 export async function clearRoom() {
-  if (!currentRoom) return;
+  if (!currentHousehold) return;
 
-  if (mode === "firebase" && roomRef && actionsRef) {
+  if (mode === "firebase" && actionsRef) {
     await push(
       actionsRef,
       stripUndefined({ type: "RESET_DEMO", clientId, sentAt: Date.now() })
     );
-    await remove(roomRef);
+    await remove(actionsRef);
     return;
   }
 

@@ -1,12 +1,28 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  Bell,
+  Check,
+  IndianRupee,
+  MessageSquare,
+  Phone,
+  PhoneCall,
+  PhoneOff,
+  Play,
+  RotateCcw,
+  ShieldAlert,
+  Timer,
+  UserCheck,
+  X,
+} from "lucide-react";
 import { silentWavDataUrl } from "../lib/demoAudio";
+import { SAMPLE_SMS } from "../lib/smsAnalyzer";
 import { useGlobalState } from "../context/GlobalState";
 
 const DEMO_GAP_MS = 3000;
 const DEMO_VOICE_SECONDS = 3;
 
 const PANEL_BUTTON =
-  "rounded-lg px-3 py-2 text-left text-sm disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm disabled:cursor-not-allowed disabled:opacity-50";
 
 export default function SimulationPanel() {
   const [open, setOpen] = useState(false);
@@ -20,9 +36,13 @@ export default function SimulationPanel() {
     endCall,
     logCallAlarm,
     tryPayment,
+    startCollectRequest,
     checkIn,
     rejectPayment,
+    approvePayment,
     sendVoiceMessage,
+    receiveSms,
+    addReminder,
     resetDemo,
     resetBoard,
     demoMode,
@@ -102,6 +122,10 @@ export default function SimulationPanel() {
         },
       },
       {
+        label: "Unknown ₹500 held",
+        run: () => tryPayment({ payee: "Unknown Shop", amount: 500 }),
+      },
+      {
         label: "Family rejects",
         run: () => rejectPayment(),
       },
@@ -143,10 +167,10 @@ export default function SimulationPanel() {
         <button
           type="button"
           onClick={() => setOpen(false)}
-          className="rounded-md px-2 py-1 text-sm text-slate-500"
+          className="rounded-md p-1 text-slate-500"
           aria-label="Close simulation panel"
         >
-          Close (`)
+          <X className="size-4" />
         </button>
       </div>
 
@@ -179,11 +203,12 @@ export default function SimulationPanel() {
       <div className="mb-3 grid gap-2">
         <button
           type="button"
-          className={`${PANEL_BUTTON} bg-teal font-semibold text-cream`}
+          className={`${PANEL_BUTTON} inline-flex items-center gap-2 bg-teal font-semibold text-cream`}
           onClick={runFullDemo}
           disabled={running}
           aria-label="Run full demo sequence"
         >
+          <Play className="size-4" aria-hidden="true" />
           {running ? "Running full demo…" : "Run full demo"}
         </button>
         {running ? (
@@ -199,7 +224,7 @@ export default function SimulationPanel() {
         <p className="text-xs text-slate-600" role="status" aria-live="polite">
           {stepLabel
             ? stepLabel
-            : "Plays check-in, KYC call, 20-min alarm, ₹25,000 block, family reject, parent voice. 3s gaps."}
+            : "Plays check-in, KYC call, 20-min alarm, ₹25,000 block, hold, family reject, parent voice. 3s gaps."}
         </p>
       </div>
 
@@ -213,7 +238,41 @@ export default function SimulationPanel() {
           }
           aria-label="Simulate a scam call overlay"
         >
+          <ShieldAlert className="size-4 shrink-0" aria-hidden="true" />
           Scam call overlay
+        </button>
+        <button
+          type="button"
+          className={`${PANEL_BUTTON} bg-red-900 text-white`}
+          disabled={running}
+          onClick={() =>
+            startCall({
+              from: "Unknown +91 98XXX 11223",
+              scam: true,
+              analyzerMode: "scripted",
+              speakCaller: true,
+            })
+          }
+          aria-label="Start the 90 second digital arrest scripted demo"
+        >
+          <ShieldAlert className="size-4 shrink-0" aria-hidden="true" />
+          Digital-arrest script (90s)
+        </button>
+        <button
+          type="button"
+          className={`${PANEL_BUTTON} bg-teal text-cream`}
+          disabled={running}
+          onClick={() =>
+            startCall({
+              from: "Unknown +91 98XXX 11223",
+              scam: false,
+              analyzerMode: "live",
+            })
+          }
+          aria-label="Start a live microphone call analyser"
+        >
+          <PhoneCall className="size-4 shrink-0" aria-hidden="true" />
+          Live mic call
         </button>
         <button
           type="button"
@@ -228,6 +287,7 @@ export default function SimulationPanel() {
           }
           aria-label="Simulate an incoming KYC scam call"
         >
+          <PhoneCall className="size-4 shrink-0" aria-hidden="true" />
           KYC call
         </button>
         <button
@@ -237,6 +297,7 @@ export default function SimulationPanel() {
           onClick={() => startCall({ from: "Dr. Meera Clinic", scam: false })}
           aria-label="Simulate a normal incoming call"
         >
+          <Phone className="size-4 shrink-0" aria-hidden="true" />
           Normal call
         </button>
         <button
@@ -246,6 +307,7 @@ export default function SimulationPanel() {
           onClick={answerCall}
           aria-label="Answer the active call"
         >
+          <PhoneCall className="size-4 shrink-0" aria-hidden="true" />
           Answer call
         </button>
         <button
@@ -255,6 +317,7 @@ export default function SimulationPanel() {
           onClick={endCall}
           aria-label="End the active call"
         >
+          <PhoneOff className="size-4 shrink-0" aria-hidden="true" />
           End call
         </button>
         <button
@@ -264,6 +327,7 @@ export default function SimulationPanel() {
           onClick={logCallAlarm}
           aria-label="Fire the 20-minute call alarm now"
         >
+          <Timer className="size-4 shrink-0" aria-hidden="true" />
           20-min call alarm
         </button>
         <button
@@ -273,6 +337,7 @@ export default function SimulationPanel() {
           onClick={() => tryPayment({ payee: "Electricity Board", amount: 850 })}
           aria-label="Simulate an allowed UPI payment of 850 rupees"
         >
+          <Check className="size-4 shrink-0" aria-hidden="true" />
           UPI ALLOW — Electricity ₹850
         </button>
         <button
@@ -282,6 +347,7 @@ export default function SimulationPanel() {
           onClick={() => tryPayment({ payee: "Unknown Shop", amount: 500 })}
           aria-label="Simulate a held UPI payment of 500 rupees"
         >
+          <IndianRupee className="size-4 shrink-0" aria-hidden="true" />
           UPI HOLD — Unknown ₹500
         </button>
         <button
@@ -291,15 +357,69 @@ export default function SimulationPanel() {
           onClick={() => tryPayment({ payee: "Refund Officer", amount: 25000 })}
           aria-label="Simulate a blocked UPI payment of 25,000 rupees"
         >
+          <IndianRupee className="size-4 shrink-0" aria-hidden="true" />
           UPI BLOCK — Unknown ₹25,000
+        </button>
+        <button
+          type="button"
+          className={`${PANEL_BUTTON} bg-purple-700 text-white`}
+          disabled={running}
+          onClick={() =>
+            startCollectRequest({ from: "Refund Officer", amount: 18000 })
+          }
+          aria-label="Simulate a UPI collect request scam asking Amma for money"
+        >
+          <IndianRupee className="size-4 shrink-0" aria-hidden="true" />
+          Collect request — ₹18,000
+        </button>
+        <button
+          type="button"
+          className={`${PANEL_BUTTON} bg-red-800 text-white`}
+          disabled={running}
+          onClick={() =>
+            receiveSms({
+              sender: SAMPLE_SMS[0].sender,
+              body: SAMPLE_SMS[0].body,
+            })
+          }
+          aria-label="Simulate a scam KYC SMS"
+        >
+          <MessageSquare className="size-4 shrink-0" aria-hidden="true" />
+          SMS SCAM — KYC link
+        </button>
+        <button
+          type="button"
+          className={`${PANEL_BUTTON} bg-green-800 text-white`}
+          disabled={running}
+          onClick={() =>
+            receiveSms({
+              sender: SAMPLE_SMS[5].sender,
+              body: SAMPLE_SMS[5].body,
+            })
+          }
+          aria-label="Simulate a genuine bank OTP SMS"
+        >
+          <MessageSquare className="size-4 shrink-0" aria-hidden="true" />
+          SMS SAFE — SBI OTP
+        </button>
+        <button
+          type="button"
+          className={`${PANEL_BUTTON} bg-green-800 text-white`}
+          disabled={running}
+          onClick={() => approvePayment()}
+          aria-label="Approve the pending payment as the family"
+        >
+          <Check className="size-4 shrink-0" aria-hidden="true" />
+          Family approves payment
         </button>
         <button
           type="button"
           className={`${PANEL_BUTTON} bg-slate-900 text-white`}
           disabled={running}
-          onClick={rejectPayment}
+          onClick={() => rejectPayment()}
           aria-label="Reject the pending payment as the family"
         >
+          <X className="size-4 shrink-0" aria-hidden="true" />
           Family rejects payment
         </button>
         <button
@@ -309,10 +429,29 @@ export default function SimulationPanel() {
           onClick={() => checkIn({ source: "tap" })}
           aria-label="Simulate a parent check-in"
         >
+          <UserCheck className="size-4 shrink-0" aria-hidden="true" />
           Parent check-in
         </button>
+        <button
+          type="button"
+          className={`${PANEL_BUTTON} bg-sky-700 text-white`}
+          disabled={running}
+          onClick={() =>
+            addReminder({
+              title: "Night medicine",
+              type: "medicine",
+              dueAt: Date.now() + (demoMode ? 15_000 : 60_000),
+              repeat: "none",
+              note: "Take your tablet with water.",
+            })
+          }
+          aria-label="Create a night medicine reminder that is due soon"
+        >
+          <Bell className="size-4 shrink-0" aria-hidden="true" />
+          Medicine reminder soon
+        </button>
         <p className="pt-1 text-xs text-slate-500">
-          Room {roomCode || "none"} · {syncMode}
+          Pairing {roomCode || "none"} · {syncMode}
         </p>
         <button
           type="button"
@@ -321,6 +460,7 @@ export default function SimulationPanel() {
           onClick={resetDemo}
           aria-label="Reset demo and clear the family room"
         >
+          <RotateCcw className="size-4 shrink-0" aria-hidden="true" />
           Reset demo (clears room)
         </button>
       </div>

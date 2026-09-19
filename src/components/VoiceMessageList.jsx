@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Pause, Play } from "lucide-react";
 import { useGlobalState } from "../context/GlobalState";
 
 const DEFAULT_NAMES = {
@@ -116,7 +117,9 @@ export default function VoiceMessageList({
                   senderNames[message.from] || message.from
                 }`}
               >
-                <span aria-hidden="true">{playing ? "❚❚" : "▶"}</span>
+                <span aria-hidden="true">
+                  {playing ? <Pause className="size-4 fill-current" /> : <Play className="size-4 fill-current" />}
+                </span>
                 <span>{playing ? "Pause" : "Play"}</span>
                 <span>{formatDuration(message.durationSec)}</span>
               </button>

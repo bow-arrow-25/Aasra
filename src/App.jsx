@@ -1,9 +1,23 @@
 import { useEffect, useState } from "react";
+import { LayoutDashboard, Smartphone } from "lucide-react";
 import { GlobalStateProvider, useGlobalState } from "./context/GlobalState";
 import ParentView from "./ParentView";
 import ChildDashboard from "./ChildDashboard";
+import PaymentToasts from "./components/PaymentToasts";
 import SimulationPanel from "./components/SimulationPanel";
-import { FamilyCreateRoom, ParentJoinRoom } from "./components/RoomScreen";
+import { ToastProvider } from "./components/Toast";
+import DemoButtons from "./components/auth/DemoButtons";
+import ElderLogin from "./components/auth/ElderLogin";
+import FamilyLogin from "./components/auth/FamilyLogin";
+import FamilySetup from "./components/auth/FamilySetup";
+import ParentShareResult from "./components/parent/ParentShareResult";
+import {
+  captureIncomingShare,
+  clearShareUrl,
+  clearStashedShareText,
+  isShareRoute,
+  peekStashedShareText,
+} from "./lib/shareTarget";
 
 function currentHash() {
   const hash = window.location.hash.replace(/^#/, "") || "/";
@@ -18,13 +32,21 @@ function useHashRoute() {
       setRoute(currentHash());
     }
     window.addEventListener("hashchange", onChange);
-    if (!window.location.hash) {
+    if (!window.location.hash && !isShareRoute()) {
       window.location.hash = "#/";
     }
     return () => window.removeEventListener("hashchange", onChange);
   }, []);
 
   return route;
+}
+
+function AuthLoading() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-cream">
+      <p className="font-parent text-[28px] font-bold text-teal">Aasra</p>
+    </div>
+  );
 }
 
 function HomeChooser() {
@@ -38,17 +60,30 @@ function HomeChooser() {
         <div className="mt-10 grid gap-4">
           <a
             href="#/parent"
-            className="rounded-2xl bg-teal px-6 py-6 font-parent text-[28px] font-bold wrap-break-word text-cream"
+            className="inline-flex items-center justify-center gap-3 rounded-2xl bg-teal px-6 py-6 font-parent text-[28px] font-bold wrap-break-word text-cream"
           >
+            <Smartphone className="size-8 shrink-0" aria-hidden="true" />
             Parent phone
           </a>
           <a
             href="#/child"
-            className="rounded-2xl border-4 border-teal px-6 py-6 font-parent text-[28px] font-bold wrap-break-word text-teal"
+            className="inline-flex items-center justify-center gap-3 rounded-2xl border-4 border-teal px-6 py-6 font-parent text-[28px] font-bold wrap-break-word text-teal"
           >
+            <LayoutDashboard className="size-8 shrink-0" aria-hidden="true" />
             Family dashboard
           </a>
         </div>
+        <DemoButtons variant="parent" />
+      </div>
+    </div>
+  );
+}
+
+function ShareShell({ children }) {
+  return (
+    <div className="flex min-h-screen justify-center overflow-x-hidden bg-teal">
+      <div className="flex min-h-screen w-full max-w-107.5 min-w-0 flex-col bg-cream px-4 py-6 font-parent text-teal sm:px-6 sm:py-8">
+        {children}
       </div>
     </div>
   );
@@ -56,18 +91,77 @@ function HomeChooser() {
 
 function RoutedApp() {
   const route = useHashRoute();
-  const { roomCode } = useGlobalState();
+  const {
+    roomCode,
+    householdId,
+    role,
+    authReady,
+    needsSetup,
+    lang,
+    pendingSms,
+    boardReady,
+    receiveSms,
+    clearSmsWarning,
+  } = useGlobalState();
+  const signedIn = Boolean((householdId || roomCode) && role);
+
+  useEffect(() => {
+    if (!isShareRoute()) return;
+    captureIncomingShare();
+    clearShareUrl();
+  }, [route]);
+
+  useEffect(() => {
+    if (!authReady) return;
+    if ((householdId || roomCode) && !boardReady) return;
+    if (pendingSms?.shared) return;
+    const body = peekStashedShareText();
+    if (!body) return;
+    receiveSms({ sender: "Shared by Amma", body, shared: true });
+  }, [authReady, boardReady, householdId, roomCode, pendingSms?.shared, receiveSms]);
+
+  function finishSharedSms() {
+    clearStashedShareText();
+    clearSmsWarning();
+  }
+
+  useEffect(() => {
+    if (!signedIn || needsSetup) return;
+    if (pendingSms?.shared && role !== "family") return;
+    const want = role === "family" ? "#/child" : "#/parent";
+    if (window.location.hash !== want) {
+      window.location.hash = want;
+    }
+  }, [signedIn, role, needsSetup, pendingSms?.shared]);
+
+  if (!authReady) {
+    return <AuthLoading />;
+  }
 
   return (
     <>
       <SimulationPanel />
-      {route === "/parent" ? (
-        roomCode ? <ParentView /> : <ParentJoinRoom />
+      <PaymentToasts />
+      {needsSetup ? <FamilySetup /> : null}
+      {!needsSetup && pendingSms?.shared && !signedIn ? (
+        <ParentShareResult
+          lang={lang}
+          message={pendingSms}
+          onDone={finishSharedSms}
+          ParentShell={ShareShell}
+        />
       ) : null}
-      {route === "/child" ? (
-        roomCode ? <ChildDashboard /> : <FamilyCreateRoom />
+      {!needsSetup && signedIn && role === "family" ? <ChildDashboard /> : null}
+      {!needsSetup && signedIn && role !== "family" ? <ParentView /> : null}
+      {!needsSetup && !signedIn && !pendingSms?.shared && route === "/parent" ? (
+        <ElderLogin />
       ) : null}
-      {route === "/" ? <HomeChooser /> : null}
+      {!needsSetup && !signedIn && !pendingSms?.shared && route === "/child" ? (
+        <FamilyLogin />
+      ) : null}
+      {!needsSetup && !signedIn && !pendingSms?.shared && route === "/" ? (
+        <HomeChooser />
+      ) : null}
     </>
   );
 }
@@ -75,7 +169,9 @@ function RoutedApp() {
 export default function App() {
   return (
     <GlobalStateProvider>
-      <RoutedApp />
+      <ToastProvider>
+        <RoutedApp />
+      </ToastProvider>
     </GlobalStateProvider>
   );
 }

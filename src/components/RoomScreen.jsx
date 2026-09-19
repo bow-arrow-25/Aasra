@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Hash, KeyRound } from "lucide-react";
 import LanguageToggle from "./LanguageToggle";
 import { useGlobalState } from "../context/GlobalState";
 import { t } from "../lib/i18n";
@@ -28,7 +29,8 @@ export function ParentJoinRoom() {
           <p className="text-[24px] font-bold">{t(lang, "appName")}</p>
           <LanguageToggle />
         </header>
-        <h1 className="text-[32px] font-bold leading-tight sm:text-[36px]">
+        <h1 className="flex items-center gap-2 text-[32px] font-bold leading-tight sm:text-[36px]">
+          <Hash className="size-8 shrink-0" aria-hidden="true" />
           {t(lang, "roomTitle")}
         </h1>
         <p className="mt-3 text-[24px] leading-snug text-teal-dark">
@@ -81,7 +83,10 @@ export function FamilyCreateRoom() {
     <div className="flex min-h-screen items-center justify-center overflow-x-hidden bg-slate-50 px-4">
       <div className="w-full max-w-lg min-w-0 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
         <p className="text-sm font-semibold tracking-wide text-teal">Aasra</p>
-        <h1 className="mt-2 text-2xl font-semibold">Create a family room</h1>
+        <h1 className="mt-2 flex items-center gap-2 text-2xl font-semibold">
+          <KeyRound className="size-6 text-teal" aria-hidden="true" />
+          Create a family room
+        </h1>
         <p className="mt-3 text-slate-600">
           Make a 6-digit code and type the same numbers on the parent phone.
           {syncMode === "firebase"
