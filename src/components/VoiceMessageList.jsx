@@ -3,8 +3,8 @@ import { Pause, Play } from "lucide-react";
 import { useGlobalState } from "../context/GlobalState";
 
 const DEFAULT_NAMES = {
-  parent: "Amma",
-  family: "Arjun",
+  parent: "Parent",
+  family: "Family",
 };
 
 function formatDuration(seconds) {

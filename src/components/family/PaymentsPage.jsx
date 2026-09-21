@@ -22,16 +22,24 @@ const FILTERS = [
 ];
 
 export default function PaymentsPage() {
-  const { payments, approvePayment, rejectPayment } = useGlobalState();
+  const { payments, approvePayment, rejectPayment, tryPayment, safePayees } =
+    useGlobalState();
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(null);
   const [now, setNow] = useState(() => Date.now());
+  const [payee, setPayee] = useState(safePayees?.[0] || "");
+  const [customPayee, setCustomPayee] = useState("");
+  const [amount, setAmount] = useState("");
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 15000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!payee && safePayees?.[0]) setPayee(safePayees[0]);
+  }, [payee, safePayees]);
 
   const list = payments || [];
   const awaiting = list.filter(isAwaitingFamily);
@@ -49,8 +57,70 @@ export default function PaymentsPage() {
     });
   }, [list, filter, query]);
 
+  function submitAttempt(event) {
+    event.preventDefault();
+    const name = payee === "__other" ? customPayee.trim() : payee;
+    const rupees = Number(String(amount).replace(/[^0-9.]/g, ""));
+    if (!name || !rupees) return;
+    tryPayment({ payee: name, amount: rupees });
+    setAmount("");
+    if (payee === "__other") setCustomPayee("");
+  }
+
   return (
     <div className="grid gap-4">
+      <section className="rounded-2xl bg-white p-4 shadow-sm">
+        <h2 className="text-lg font-semibold">Watch a payment</h2>
+        <p className="mt-1 text-sm text-slate-600">
+          Log a payment the parent is trying to make. Safe payees go through.
+          Unknown names or more than ₹10,000 are held or blocked.
+        </p>
+        <form className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1.3fr)_8rem_auto]" onSubmit={submitAttempt}>
+          <label className="grid gap-1 text-sm font-semibold text-slate-600">
+            Payee
+            <select
+              value={payee}
+              onChange={(event) => setPayee(event.target.value)}
+              className="rounded-xl border border-slate-200 px-3 py-2 font-medium text-slate-900"
+            >
+              {(safePayees || []).map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+              <option value="__other">Someone new</option>
+            </select>
+          </label>
+          {payee === "__other" ? (
+            <label className="grid gap-1 text-sm font-semibold text-slate-600 sm:col-span-3">
+              Name or UPI
+              <input
+                value={customPayee}
+                onChange={(event) => setCustomPayee(event.target.value)}
+                className="rounded-xl border border-slate-200 px-3 py-2 font-medium text-slate-900"
+                placeholder="Refund Officer"
+              />
+            </label>
+          ) : null}
+          <label className="grid gap-1 text-sm font-semibold text-slate-600">
+            Amount
+            <input
+              inputMode="numeric"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value.replace(/[^\d]/g, "").slice(0, 7))}
+              className="rounded-xl border border-slate-200 px-3 py-2 font-medium text-slate-900"
+              placeholder="500"
+            />
+          </label>
+          <button
+            type="submit"
+            className="self-end min-h-11 rounded-xl bg-teal px-4 py-2 text-sm font-semibold text-cream"
+          >
+            Check payment
+          </button>
+        </form>
+      </section>
+
       <section className="grid gap-2 sm:grid-cols-3">
         <SummaryCard
           label="Sent this week"

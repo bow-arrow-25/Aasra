@@ -7,7 +7,17 @@ import {
 } from "firebase/auth";
 import { get, ref, update } from "firebase/database";
 import { getFirebaseAuth, getFirebaseDb, hasFirebaseConfig } from "./firebase";
-import { hashPin, randomSalt } from "./pin";
+import { hashPin, randomSalt, verifyPin } from "./pin";
+import {
+  localGetHousehold,
+  localGetUser,
+  localLookupCode,
+  localSaveCode,
+  localSaveHousehold,
+  localSaveUser,
+  localSignIn,
+  localSignUp,
+} from "./localFamily";
 import {
   DEFAULT_FAMILY_MEMBERS,
   DEFAULT_SAFE_PAYEES,
@@ -34,6 +44,9 @@ export function authErrorMessage(error) {
   if (code.includes("operation-not-allowed")) {
     return "Enable Email/Password and Anonymous sign-in in the Firebase console (Authentication > Sign-in method).";
   }
+  if (code.includes("configuration-not-found")) {
+    return "Firebase Authentication is not set up yet. In the Firebase console open Authentication, click Get started, then enable Email/Password and Anonymous.";
+  }
   return error?.message || "Something went wrong. Please try again.";
 }
 
@@ -46,16 +59,124 @@ export function listenAuth(callback) {
   return onAuthStateChanged(auth, callback);
 }
 
+function isAuthUnavailable(error) {
+  const code = String(error?.code || error?.message || "");
+  return (
+    code.includes("configuration-not-found") ||
+    code.includes("CONFIGURATION_NOT_FOUND") ||
+    code.includes("operation-not-allowed") ||
+    code.includes("admin-restricted-operation") ||
+    code.includes("permission-denied") ||
+    code.includes("PERMISSION_DENIED")
+  );
+}
+
+function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+function accountKey(email) {
+  return normalizeEmail(email).replace(/[.#$\[\]]/g, "_");
+}
+
+function assertFamilyCredentials(email, password) {
+  if (!normalizeEmail(email).includes("@")) {
+    const error = new Error("Enter a valid email address.");
+    error.code = "auth/invalid-email";
+    throw error;
+  }
+  if (String(password || "").length < 6) {
+    const error = new Error("Use a password with at least 6 characters.");
+    error.code = "auth/weak-password";
+    throw error;
+  }
+}
+
+async function signUpFamilyAccount(email, password) {
+  const db = getFirebaseDb();
+  if (db) {
+    try {
+      const key = accountKey(email);
+      const existing = await get(ref(db, `familyAccounts/${key}`));
+      if (existing.exists()) {
+        const error = new Error("That email already has an account. Sign in instead.");
+        error.code = "auth/email-already-in-use";
+        throw error;
+      }
+      const passwordSalt = randomSalt();
+      const passwordHash = await hashPin(password, passwordSalt);
+      const uid = `family-${crypto.randomUUID()}`;
+      await update(ref(db), {
+        [`familyAccounts/${key}`]: {
+          uid,
+          email,
+          passwordHash,
+          passwordSalt,
+          createdAt: Date.now(),
+        },
+        [`users/${uid}`]: { role: "family" },
+      });
+      localSaveUser(uid, { role: "family" });
+      return { uid, email };
+    } catch (error) {
+      if (error?.code === "auth/email-already-in-use") throw error;
+      if (!isAuthUnavailable(error)) throw error;
+    }
+  }
+  return localSignUp(email, password);
+}
+
+async function signInFamilyAccount(email, password) {
+  const db = getFirebaseDb();
+  if (db) {
+    try {
+      const snap = await get(ref(db, `familyAccounts/${accountKey(email)}`));
+      if (snap.exists()) {
+        const record = snap.val() || {};
+        const ok = await verifyPin(password, record.passwordSalt, record.passwordHash);
+        if (!ok) {
+          const error = new Error("Email or password is incorrect.");
+          error.code = "auth/invalid-credential";
+          throw error;
+        }
+        return { uid: record.uid, email: record.email || email };
+      }
+    } catch (error) {
+      if (error?.code === "auth/invalid-credential") throw error;
+      if (!isAuthUnavailable(error)) throw error;
+    }
+  }
+  return localSignIn(email, password);
+}
+
 export async function familySignUp(email, password) {
+  const trimmed = normalizeEmail(email);
+  assertFamilyCredentials(trimmed, password);
   const auth = getFirebaseAuth();
-  const cred = await createUserWithEmailAndPassword(auth, email, password);
-  return cred.user;
+  if (auth) {
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, trimmed, password);
+      return cred.user;
+    } catch (error) {
+      if (!isAuthUnavailable(error)) throw error;
+    }
+  }
+  return signUpFamilyAccount(trimmed, password);
 }
 
 export async function familySignIn(email, password) {
+  const trimmed = normalizeEmail(email);
+  assertFamilyCredentials(trimmed, password);
   const auth = getFirebaseAuth();
-  const cred = await signInWithEmailAndPassword(auth, email, password);
-  return cred.user;
+  if (auth) {
+    try {
+      const cred = await signInWithEmailAndPassword(auth, trimmed, password);
+      return cred.user;
+    } catch (error) {
+      if (!isAuthUnavailable(error)) throw error;
+    }
+  }
+  return signInFamilyAccount(trimmed, password);
 }
 
 export async function ensureAnonymousUser() {
@@ -73,34 +194,64 @@ export async function signOutFirebase() {
 }
 
 export async function getUserRecord(uid) {
+  if (!uid) return null;
   const db = getFirebaseDb();
-  if (!db || !uid) return null;
-  const snap = await get(ref(db, `users/${uid}`));
-  return snap.exists() ? snap.val() : null;
+  if (db) {
+    try {
+      const snap = await get(ref(db, `users/${uid}`));
+      if (snap.exists()) return snap.val();
+    } catch {
+      /* rules or offline */
+    }
+  }
+  return localGetUser(uid);
 }
 
 export async function getHousehold(householdId) {
+  if (!householdId) return null;
   const db = getFirebaseDb();
-  if (!db || !householdId) return null;
-  const snap = await get(ref(db, `households/${householdId}`));
-  return snap.exists() ? snap.val() : null;
+  if (db) {
+    try {
+      const snap = await get(ref(db, `households/${householdId}`));
+      if (snap.exists()) return snap.val();
+    } catch {
+      /* rules or offline */
+    }
+  }
+  return localGetHousehold(householdId);
 }
 
 export async function lookupHouseholdIdByCode(code) {
   const db = getFirebaseDb();
-  if (!db) return null;
-  const snap = await get(ref(db, `pairingCodes/${code}`));
-  if (!snap.exists()) return null;
-  const value = snap.val();
-  return typeof value === "string" ? value : value?.householdId || null;
+  if (db) {
+    try {
+      const snap = await get(ref(db, `pairingCodes/${code}`));
+      if (snap.exists()) {
+        const value = snap.val();
+        return typeof value === "string" ? value : value?.householdId || null;
+      }
+    } catch {
+      /* rules or offline */
+    }
+  }
+  return localLookupCode(code);
 }
 
 async function allocatePairingCode() {
   const db = getFirebaseDb();
   for (let i = 0; i < 12; i += 1) {
     const code = createPairingCode();
-    const snap = await get(ref(db, `pairingCodes/${code}`));
-    if (!snap.exists()) return code;
+    if (db) {
+      try {
+        const snap = await get(ref(db, `pairingCodes/${code}`));
+        if (!snap.exists() && !localLookupCode(code)) return code;
+        continue;
+      } catch {
+        if (!localLookupCode(code)) return code;
+      }
+    } else if (!localLookupCode(code)) {
+      return code;
+    }
   }
   throw new Error("Could not create a free pairing code. Try again.");
 }
@@ -121,19 +272,29 @@ function demoHouseholdPayload() {
   };
 }
 
-export async function createHouseholdForFamily({ uid, email, profile, safePayees }) {
+export async function createHouseholdForFamily({ uid, email, profile, safePayees, kind = "family" }) {
   const db = getFirebaseDb();
   const pairingCode = await allocatePairingCode();
   const householdId = crypto.randomUUID();
   const payees = (safePayees || []).map((item) => String(item).trim()).filter(Boolean);
+  const isOrg = kind === "org";
   const household = {
     pairingCode,
+    kind: isOrg ? "org" : "family",
     profile: {
-      elderName: profile.elderName.trim(),
+      kind: isOrg ? "org" : "family",
+      elderName: isOrg ? String(profile.orgName || "").trim() : profile.elderName.trim(),
+      orgName: isOrg ? String(profile.orgName || "").trim() : "",
       age: Number(profile.age) || 0,
       city: String(profile.city || "").trim(),
       lang: profile.lang || "en",
-      familyMembers: DEFAULT_FAMILY_MEMBERS,
+      familyMembers: profile.familyMembers?.length
+        ? profile.familyMembers
+        : DEFAULT_FAMILY_MEMBERS,
+      residents: profile.residents || [],
+      checkupTypes: profile.checkupTypes || [],
+      dailyChecks: profile.dailyChecks || [],
+      reviews: profile.reviews || [],
     },
     safePayees: payees.length ? payees : DEFAULT_SAFE_PAYEES,
     members: {
@@ -147,13 +308,46 @@ export async function createHouseholdForFamily({ uid, email, profile, safePayees
     createdAt: Date.now(),
   };
 
-  await update(ref(db), {
-    [`households/${householdId}`]: household,
-    [`pairingCodes/${pairingCode}`]: householdId,
-    [`users/${uid}`]: { householdId, role: "family" },
-  });
+  if (db) {
+    try {
+      await update(ref(db), {
+        [`households/${householdId}`]: household,
+        [`pairingCodes/${pairingCode}`]: householdId,
+        [`users/${uid}`]: { householdId, role: "family" },
+      });
+    } catch {
+      /* Auth may be off; keep the household on this device for the demo. */
+    }
+  }
+  localSaveHousehold(householdId, household);
+  localSaveCode(pairingCode, householdId);
+  localSaveUser(uid, { householdId, role: "family", email: email || "" });
 
   return { householdId, pairingCode, household };
+}
+
+export async function updateHouseholdProfile(householdId, profilePatch) {
+  if (!householdId || !profilePatch) return null;
+  const household = (await getHousehold(householdId)) || {};
+  const next = {
+    ...household,
+    profile: {
+      ...(household.profile || {}),
+      ...profilePatch,
+    },
+  };
+  const db = getFirebaseDb();
+  if (db) {
+    try {
+      await update(ref(db), {
+        [`households/${householdId}/profile`]: next.profile,
+      });
+    } catch {
+      /* keep the household on this device */
+    }
+  }
+  localSaveHousehold(householdId, next);
+  return next;
 }
 
 export async function registerElderOnHousehold({
@@ -163,16 +357,29 @@ export async function registerElderOnHousehold({
   pinSalt,
 }) {
   const db = getFirebaseDb();
-  await update(ref(db), {
-    [`households/${householdId}/members/${uid}`]: {
-      uid,
-      role: "elder",
-      pinHash,
-      pinSalt,
-      joinedAt: Date.now(),
-    },
-    [`users/${uid}`]: { householdId, role: "elder" },
+  const member = {
+    uid,
+    role: "elder",
+    pinHash,
+    pinSalt,
+    joinedAt: Date.now(),
+  };
+  if (db) {
+    try {
+      await update(ref(db), {
+        [`households/${householdId}/members/${uid}`]: member,
+        [`users/${uid}`]: { householdId, role: "elder" },
+      });
+    } catch {
+      /* local pairing still works for the demo */
+    }
+  }
+  const household = localGetHousehold(householdId) || {};
+  localSaveHousehold(householdId, {
+    ...household,
+    members: { ...(household.members || {}), [uid]: member },
   });
+  localSaveUser(uid, { householdId, role: "elder" });
 }
 
 export async function ensureDemoHousehold(uid, role, { pinHash, pinSalt } = {}) {
@@ -201,7 +408,19 @@ export async function ensureDemoHousehold(uid, role, { pinHash, pinSalt } = {}) 
   }
   updates[`users/${uid}`] = { householdId: DEMO_HOUSEHOLD_ID, role };
 
-  await update(ref(db), updates);
+  try {
+    if (db) await update(ref(db), updates);
+    else throw new Error("offline");
+  } catch {
+    const local = localGetHousehold(DEMO_HOUSEHOLD_ID) || demoHouseholdPayload();
+    localSaveHousehold(DEMO_HOUSEHOLD_ID, {
+      ...local,
+      pairingCode: DEMO_PAIRING_CODE,
+      members: { ...(local.members || {}), [uid]: member },
+    });
+    localSaveCode(DEMO_PAIRING_CODE, DEMO_HOUSEHOLD_ID);
+    localSaveUser(uid, { householdId: DEMO_HOUSEHOLD_ID, role });
+  }
   const household = (await getHousehold(DEMO_HOUSEHOLD_ID)) || {
     ...demoHouseholdPayload(),
     pairingCode: DEMO_PAIRING_CODE,
@@ -224,8 +443,9 @@ export function householdToBoard(household) {
   const safePayees = household?.safePayees?.length
     ? household.safePayees
     : DEFAULT_SAFE_PAYEES;
+  const householdKind = profile.kind === "org" || household?.kind === "org" ? "org" : "family";
   return {
-    parentName: profile.elderName || "Amma",
+    parentName: profile.elderName || "",
     safePayees,
     knownPayees: [
       ...safePayees,
@@ -239,5 +459,11 @@ export function householdToBoard(household) {
     pairingCode: household?.pairingCode || "",
     elderAge: profile.age || null,
     elderCity: profile.city || "",
+    householdKind,
+    orgName: profile.orgName || (householdKind === "org" ? profile.elderName : "") || "",
+    residents: profile.residents || [],
+    checkupTypes: profile.checkupTypes || [],
+    dailyChecks: profile.dailyChecks || [],
+    reviews: profile.reviews || [],
   };
 }

@@ -126,10 +126,17 @@ export function matchesPaymentFilter(payment, filter) {
   return true;
 }
 
+export function displayParentName(parentName) {
+  return String(parentName || "").trim() || "Parent";
+}
+
 export function primaryFamilyName(familyMembers) {
   return (
-    (familyMembers || []).find((member) => member.role === "primary")?.name ||
-    "Arjun"
+    String(
+      (familyMembers || []).find((member) => member.role === "primary")?.name ||
+        (familyMembers || [])[0]?.name ||
+        ""
+    ).trim() || "Family"
   );
 }
 

@@ -47,7 +47,7 @@ export default function PaymentToasts() {
         toast({
           level: "CRITICAL",
           title: `${who} rejected the payment`,
-          body: `${parentName || "Amma"} was told not to send ${detail}.`,
+          body: `${parentName || "Parent"} was told not to send ${detail}.`,
         });
       }
     }

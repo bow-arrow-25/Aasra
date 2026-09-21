@@ -6,7 +6,7 @@ const STAGE_COPY = {
   scam: "This call sounds like a scam",
 };
 
-const STAGE_BAR = {
+const STAGE_FILL = {
   normal: "bg-green-600",
   suspicious: "bg-yellow-400",
   scam: "bg-red-600",
@@ -22,10 +22,12 @@ export default function RiskMeter({
   score = 0,
   size = "md",
   label,
+  phrases = [],
 }) {
   const clamped = Math.max(0, Math.min(100, Number(score) || 0));
   const stage = stageFromScore(clamped);
   const large = size === "lg";
+  const heard = (phrases || []).filter(Boolean);
 
   return (
     <div
@@ -55,16 +57,28 @@ export default function RiskMeter({
         </p>
       </div>
       <div
-        className={`relative mt-3 overflow-hidden rounded-full bg-linear-to-r from-green-500 via-yellow-300 to-red-500 ${
-          large ? "h-5" : "h-3"
+        className={`relative mt-3 overflow-hidden rounded-full bg-slate-200 ${
+          large ? "h-8" : "h-4"
         }`}
       >
-        <span
-          aria-hidden="true"
-          className={`absolute top-1/2 size-4 -translate-y-1/2 rounded-full border-2 border-white shadow ${STAGE_BAR[stage]}`}
-          style={{ left: `calc(${clamped}% - 0.5rem)` }}
+        <div
+          className={`h-full rounded-full transition-all duration-500 ease-out ${STAGE_FILL[stage]}`}
+          style={{ width: `${clamped === 0 ? 0 : Math.max(clamped, 8)}%` }}
         />
       </div>
+      {heard.length ? (
+        <p
+          className={`mt-2 font-semibold leading-snug wrap-break-word ${STAGE_TEXT[stage]} ${
+            large ? "text-[22px]" : "text-xs"
+          }`}
+        >
+          Heard: {heard.join(", ")}
+        </p>
+      ) : (
+        <p className={`mt-2 ${large ? "text-[20px] text-teal" : "text-xs text-slate-500"}`}>
+          Listening for scam words…
+        </p>
+      )}
     </div>
   );
 }

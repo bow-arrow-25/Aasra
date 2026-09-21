@@ -17,6 +17,52 @@ export const DEFAULT_FAMILY_MEMBERS = [
   { name: "Meera", role: "backup" },
 ];
 
+export function buildFamilyMembers(primaryName, backupName) {
+  const primary = String(primaryName || "").trim();
+  const backup = String(backupName || "").trim();
+  return [
+    { name: primary || "Family", role: "primary" },
+    { name: backup || "Backup", role: "backup" },
+  ];
+}
+
+export function readSavedProfile() {
+  const raw = readSession("aasra-profile");
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeSavedProfile(profile) {
+  if (!profile) {
+    writeSession("aasra-profile", "");
+    return;
+  }
+  writeSession(
+    "aasra-profile",
+    JSON.stringify({
+      parentName: profile.parentName || "",
+      familyMembers: profile.familyMembers || [],
+      elderAge: profile.elderAge ?? null,
+      elderCity: profile.elderCity || "",
+      lang: profile.lang || "en",
+      safePayees: profile.safePayees || [],
+      knownPayees: profile.knownPayees || [],
+      householdKind: profile.householdKind || "family",
+      orgName: profile.orgName || "",
+      residents: profile.residents || [],
+      checkupTypes: profile.checkupTypes || [],
+      dailyChecks: profile.dailyChecks || [],
+      reviews: profile.reviews || [],
+      currentResidentId: profile.currentResidentId || "",
+    })
+  );
+}
+
 export function readJson(key) {
   try {
     const raw = localStorage.getItem(key);
@@ -60,7 +106,7 @@ export function writeSession(key, value) {
 }
 
 export function clearSessionKeys() {
-  ["aasra-room", "aasra-role", "aasra-household", UNLOCK_KEY].forEach((key) => {
+  ["aasra-room", "aasra-role", "aasra-household", "aasra-email", "aasra-profile", UNLOCK_KEY].forEach((key) => {
     try {
       sessionStorage.removeItem(key);
     } catch {

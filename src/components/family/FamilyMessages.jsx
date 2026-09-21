@@ -23,7 +23,7 @@ function matchesFilter(message, filter) {
 }
 
 export default function FamilyMessages() {
-  const { messages, spamSenders, markSmsSpam, markSmsSafe } = useGlobalState();
+  const { messages, spamSenders, markSmsSpam, markSmsSafe, parentName } = useGlobalState();
   const [filter, setFilter] = useState("all");
   const list = messages || [];
 
@@ -101,7 +101,7 @@ export default function FamilyMessages() {
                     <td className="px-2 py-3 font-medium wrap-break-word">
                       {message.sender}
                       {message.fromPhone ? (
-                        <p className="mt-1 text-xs font-semibold text-teal">Amma's phone</p>
+                        <p className="mt-1 text-xs font-semibold text-teal">{parentName}'s phone</p>
                       ) : null}
                     </td>
                     <td className="px-2 py-3 wrap-break-word text-slate-700">

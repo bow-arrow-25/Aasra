@@ -5,7 +5,7 @@ import VoiceRecorder from "../VoiceRecorder";
 
 export default function FamilyVoice() {
   const { parentName, voiceMessages, familyMembers } = useGlobalState();
-  const primaryMember = familyMembers.find((member) => member.role === "primary");
+  const primaryMember = (familyMembers || []).find((member) => member.role === "primary");
 
   return (
     <section className="rounded-2xl bg-white p-4 shadow-sm">
@@ -28,7 +28,7 @@ export default function FamilyVoice() {
             viewer="family"
             senderNames={{
               parent: parentName,
-              family: primaryMember?.name || "Arjun",
+              family: primaryMember?.name || "Family",
             }}
           />
         </div>

@@ -22,7 +22,7 @@ export default function NumberPad({
   }
 
   return (
-    <div className="mt-8 grid grid-cols-3 gap-3">
+    <div className="mt-4 grid grid-cols-3 gap-2">
       {keys.map((key) => (
         <button
           key={key}
@@ -32,7 +32,7 @@ export default function NumberPad({
           aria-label={
             key === "clear" ? clearLabel : key === "join" ? submitLabel : `Digit ${key}`
           }
-          className={`min-h-20 rounded-2xl text-[28px] font-bold disabled:opacity-40 ${
+          className={`min-h-14 rounded-xl text-[24px] font-bold disabled:opacity-40 sm:min-h-16 ${
             key === "join"
               ? "bg-teal text-cream"
               : "border-4 border-teal bg-white text-teal"

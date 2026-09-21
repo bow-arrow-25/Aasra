@@ -6,7 +6,6 @@ import {
   IndianRupee,
   MessageSquare,
   Mic,
-  Phone,
   Volume2,
 } from "lucide-react";
 import LanguageToggle from "./components/LanguageToggle";
@@ -15,39 +14,43 @@ import VoiceRecorder from "./components/VoiceRecorder";
 import ParentCallOverlay from "./components/parent/ParentCallOverlay";
 import ParentMessages from "./components/parent/ParentMessages";
 import ParentReminders from "./components/parent/ParentReminders";
+import ParentSendMoney from "./components/parent/ParentSendMoney";
 import ParentShareResult from "./components/parent/ParentShareResult";
+import ReminderPopup from "./components/parent/ReminderPopup";
 import { useGlobalState } from "./context/GlobalState";
 import { t } from "./lib/i18n";
 import {
+  displayParentName,
   formatRupees,
-  parentStatusKey,
   PAYMENT_STATUS,
+  primaryFamilyName,
 } from "./lib/payments";
+import { unlockAudio } from "./lib/demoAudio";
 import { dueReminders } from "./lib/reminders";
 import { isOkayPhrase } from "./lib/rules";
 import { speak, speechLangCode } from "./lib/speak";
 
-function paymentCopy(lang, payment) {
+function paymentCopy(lang, payment, names) {
   if (payment.status === PAYMENT_STATUS.COLLECT_REQUEST_DECLINED) {
-    return { title: t(lang, "collectDeclinedTitle"), body: t(lang, "collectDeclinedBody") };
+    return { title: t(lang, "collectDeclinedTitle", names), body: t(lang, "collectDeclinedBody", names) };
   }
   if (payment.status === PAYMENT_STATUS.REJECTED || payment.rejected) {
-    return { title: t(lang, "rejectedTitle"), body: t(lang, "rejectedBody") };
+    return { title: t(lang, "rejectedTitle", names), body: t(lang, "rejectedBody", names) };
   }
   if (payment.status === PAYMENT_STATUS.BLOCKED || payment.decision === "BLOCK") {
-    return { title: t(lang, "blockedTitle"), body: t(lang, "blockedBody") };
+    return { title: t(lang, "blockedTitle", names), body: t(lang, "blockedBody", names) };
   }
   if (
     payment.status === PAYMENT_STATUS.HELD ||
     payment.status === PAYMENT_STATUS.PENDING_APPROVAL ||
     payment.decision === "HOLD"
   ) {
-    return { title: t(lang, "heldTitle"), body: t(lang, "heldBody") };
+    return { title: t(lang, "heldTitle", names), body: t(lang, "heldBody", names) };
   }
   if (payment.status === PAYMENT_STATUS.APPROVED_SENT) {
-    return { title: t(lang, "approvedTitle"), body: t(lang, "approvedBody") };
+    return { title: t(lang, "approvedTitle", names), body: t(lang, "approvedBody", names) };
   }
-  return { title: t(lang, "allowedTitle"), body: t(lang, "allowedBody") };
+  return { title: t(lang, "allowedTitle", names), body: t(lang, "allowedBody", names) };
 }
 
 function collectSpeech(lang) {
@@ -58,14 +61,14 @@ function smsWarningSpeech(lang) {
   return `${t(lang, "smsWarningTitle")}. ${t(lang, "smsWarningBody")}`;
 }
 
-function paymentSpeech(lang, payment) {
+function paymentSpeech(lang, payment, names) {
   if (
     payment?.kind === "COLLECT" &&
     payment.status === PAYMENT_STATUS.PENDING_APPROVAL
   ) {
     return collectSpeech(lang);
   }
-  const copy = paymentCopy(lang, payment);
+  const copy = paymentCopy(lang, payment, names);
   return `${copy.title}. ${copy.body}`;
 }
 
@@ -74,7 +77,7 @@ function SpeakAgainButton({ lang, text }) {
     <button
       type="button"
       onClick={() => speak(text, lang)}
-      className="mt-4 inline-flex min-h-14 items-center gap-2 self-start rounded-xl border-2 border-teal px-4 text-[24px] font-bold text-teal"
+      className="mt-3 inline-flex min-h-12 items-center gap-2 self-start rounded-xl border-2 border-teal px-3 text-[24px] font-bold text-teal"
       aria-label={t(lang, "hearAgain")}
     >
       <Volume2 className="size-6" aria-hidden="true" />
@@ -103,13 +106,28 @@ export default function ParentView() {
     askFamilyAboutPayment,
     deleteSms,
     askFamilyAboutSms,
+    parentName,
+    familyMembers,
+    safePayees,
+    tryPayment,
   } = useGlobalState();
+  const familyName = primaryFamilyName(familyMembers);
+  const nameVars = { parent: displayParentName(parentName), family: familyName };
+  const senderNames = { parent: displayParentName(parentName), family: familyName };
   const [screen, setScreen] = useState("home");
   const [listening, setListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(true);
   const checkInRef = useRef(checkIn);
   const lastVoiceCheckInRef = useRef(0);
   checkInRef.current = checkIn;
+
+  useEffect(() => {
+    function unlock() {
+      unlockAudio();
+    }
+    window.addEventListener("pointerdown", unlock, { once: true });
+    return () => window.removeEventListener("pointerdown", unlock);
+  }, []);
 
   const familyMessages = (voiceMessages || []).filter((message) => message.from === "family");
   const newestUnheardFamilyMessage = familyMessages.find(
@@ -185,9 +203,9 @@ export default function ParentView() {
 
   useEffect(() => {
     if (pendingPayment && !activeCall) {
-      speak(paymentSpeech(lang, pendingPayment), lang);
+      speak(paymentSpeech(lang, pendingPayment, nameVars), lang);
     }
-  }, [pendingPayment?.id, pendingPayment?.status, lang, activeCall]);
+  }, [pendingPayment?.id, pendingPayment?.status, lang, activeCall, nameVars.parent, nameVars.family]);
 
   useEffect(() => {
     if (pendingSms && !pendingSms.shared && !activeCall && !pendingPayment) {
@@ -203,7 +221,7 @@ export default function ParentView() {
       !pendingSms &&
       screen === "home"
     ) {
-      speak(t(lang, "newVoiceFromArjun"), lang);
+      speak(t(lang, "newVoiceFromArjun", nameVars), lang);
     }
   }, [
     newestUnheardFamilyMessage?.id,
@@ -227,6 +245,7 @@ export default function ParentView() {
     return (
       <ParentCallOverlay
         lang={lang}
+        names={nameVars}
         activeCall={activeCall}
         answerCall={answerCall}
         endCall={endCall}
@@ -261,13 +280,13 @@ export default function ParentView() {
     const warning = `${t(lang, "collectTitle")}. ${t(lang, "collectBody")}`;
     return (
       <ParentShell>
-        <h1 className="text-[32px] font-bold leading-tight wrap-break-word text-red-800">
+        <h1 className="text-[28px] font-bold leading-tight wrap-break-word text-red-800">
           {t(lang, "collectTitle")}
         </h1>
-        <p className="mt-4 rounded-2xl bg-red-100 p-4 text-[24px] leading-snug wrap-break-word text-red-950">
+        <p className="mt-3 rounded-2xl bg-red-100 px-3 py-3 text-[24px] leading-snug wrap-break-word text-red-950">
           {t(lang, "collectBody")}
         </p>
-        <p className="mt-8 text-[24px] wrap-break-word text-teal">
+        <p className="mt-3 text-[24px] wrap-break-word text-teal">
           {t(lang, "payeeLabel")}: {pendingPayment.payee}
         </p>
         <p className="text-[28px] font-bold wrap-break-word text-teal">
@@ -283,7 +302,7 @@ export default function ParentView() {
         <button
           type="button"
           onClick={() => askFamilyAboutPayment(pendingPayment.id)}
-          className="mt-4 inline-flex min-h-16 w-full items-center justify-center rounded-2xl border-4 border-teal px-6 text-[24px] font-bold wrap-break-word text-teal"
+          className="mt-3 inline-flex min-h-14 w-full items-center justify-center rounded-2xl border-4 border-teal px-4 text-[24px] font-bold wrap-break-word text-teal"
           aria-label={t(lang, "collectAskFamily")}
         >
           {t(lang, "collectAskFamily")}
@@ -293,20 +312,20 @@ export default function ParentView() {
   }
 
   if (pendingPayment) {
-    const copy = paymentCopy(lang, pendingPayment);
+    const copy = paymentCopy(lang, pendingPayment, nameVars);
     return (
       <ParentShell>
-        <h1 className="text-[32px] font-bold leading-tight wrap-break-word text-teal">
+        <h1 className="text-[28px] font-bold leading-tight wrap-break-word text-teal">
           {copy.title}
         </h1>
-        <p className="mt-4 text-[24px] leading-snug wrap-break-word text-teal-dark">{copy.body}</p>
-        <p className="mt-8 text-[24px] wrap-break-word text-teal">
+        <p className="mt-3 text-[24px] leading-snug wrap-break-word text-teal-dark">{copy.body}</p>
+        <p className="mt-3 text-[24px] wrap-break-word text-teal">
           {t(lang, "payeeLabel")}: {pendingPayment.payee}
         </p>
         <p className="text-[28px] font-bold wrap-break-word text-teal">
           {t(lang, "amountLabel")}: {formatRupees(pendingPayment.amount)}
         </p>
-        <SpeakAgainButton lang={lang} text={paymentSpeech(lang, pendingPayment)} />
+        <SpeakAgainButton lang={lang} text={paymentSpeech(lang, pendingPayment, nameVars)} />
         <PrimaryButton onClick={clearPayment} aria-label={t(lang, "gotIt")}>
           {t(lang, "gotIt")}
         </PrimaryButton>
@@ -318,13 +337,13 @@ export default function ParentView() {
     const familyMarked = pendingSms.familyVerdict === "SPAM";
     return (
       <ParentShell>
-        <h1 className="text-[32px] font-bold leading-tight wrap-break-word text-red-800">
+        <h1 className="text-[28px] font-bold leading-tight wrap-break-word text-red-800">
           {t(lang, "smsWarningTitle")}
         </h1>
-        <p className="mt-4 rounded-2xl bg-red-100 p-4 text-[24px] leading-snug wrap-break-word text-red-950">
+        <p className="mt-3 rounded-2xl bg-red-100 px-3 py-3 text-[24px] leading-snug wrap-break-word text-red-950">
           {familyMarked ? t(lang, "smsFamilySpam") : t(lang, "smsWarningBody")}
         </p>
-        <p className="mt-6 text-[24px] font-bold wrap-break-word text-teal">{pendingSms.sender}</p>
+        <p className="mt-3 text-[24px] font-bold wrap-break-word text-teal">{pendingSms.sender}</p>
         <p className="mt-2 text-[24px] leading-snug wrap-break-word text-teal-dark">
           {pendingSms.body}
         </p>
@@ -338,7 +357,7 @@ export default function ParentView() {
         <button
           type="button"
           onClick={() => askFamilyAboutSms(pendingSms.id)}
-          className="mt-4 inline-flex min-h-16 w-full items-center justify-center rounded-2xl border-4 border-teal px-6 text-[24px] font-bold wrap-break-word text-teal"
+          className="mt-3 inline-flex min-h-14 w-full items-center justify-center rounded-2xl border-4 border-teal px-4 text-[24px] font-bold wrap-break-word text-teal"
           aria-label={t(lang, "collectAskFamily")}
         >
           {t(lang, "collectAskFamily")}
@@ -351,23 +370,23 @@ export default function ParentView() {
     return (
       <ParentShell>
         <BackButton lang={lang} onClick={() => setScreen("home")} />
-        <h1 className="mt-6 text-[36px] font-bold leading-tight wrap-break-word text-teal">
+        <h1 className="mt-3 text-[28px] font-bold leading-tight wrap-break-word text-teal">
           {t(lang, "voiceScreenTitle")}
         </h1>
-        <p className="mt-3 text-[24px] leading-snug text-teal-dark">
-          {t(lang, "voiceScreenHint")}
+        <p className="mt-2 text-[24px] leading-snug text-teal-dark">
+          {t(lang, "voiceScreenHint", nameVars)}
         </p>
-        <div className="mt-8">
+        <div className="mt-3">
           <VoiceRecorder from="parent" labels={recorderLabels} />
         </div>
-        <h2 className="mt-10 text-[28px] font-bold text-teal">
+        <h2 className="mt-4 text-[26px] font-bold text-teal">
           {t(lang, "receivedMessages")}
         </h2>
         <div className="mt-4">
           <VoiceMessageList
             messages={familyMessages}
             viewer="parent"
-            senderNames={{ parent: "Amma", family: "Arjun" }}
+            senderNames={senderNames}
             emptyText={t(lang, "noFamilyMessages")}
             largeControls
           />
@@ -377,37 +396,18 @@ export default function ParentView() {
   }
 
   if (screen === "send-money") {
-    const recent = (payments || []).slice(0, 10);
     return (
-      <ParentShell>
-        <BackButton lang={lang} onClick={() => setScreen("home")} />
-        <h1 className="mt-6 text-[32px] font-bold leading-tight wrap-break-word text-teal">
-          {t(lang, "myPayments")}
-        </h1>
-        <p className="mt-3 text-[24px] leading-snug text-teal-dark">
-          {t(lang, "myPaymentsHint")}
-        </p>
-        {recent.length === 0 ? (
-          <p className="mt-8 text-[24px] text-teal">{t(lang, "noPaymentsYet")}</p>
-        ) : (
-          <ul className="mt-8 grid gap-3">
-            {recent.map((payment) => (
-              <li
-                key={payment.id}
-                className="rounded-2xl border-4 border-teal bg-white px-4 py-4"
-              >
-                <p className="text-[24px] wrap-break-word text-teal-dark">{payment.payee}</p>
-                <p className="text-[28px] font-bold text-teal">
-                  {formatRupees(payment.amount)}
-                </p>
-                <p className="mt-2 text-[32px] font-bold leading-tight wrap-break-word text-teal">
-                  {t(lang, parentStatusKey(payment.status))}
-                </p>
-              </li>
-            ))}
-          </ul>
-        )}
-      </ParentShell>
+      <ParentSendMoney
+        lang={lang}
+        names={nameVars}
+        payments={payments}
+        safePayees={safePayees}
+        tryPayment={tryPayment}
+        onBack={() => setScreen("home")}
+        BackButton={BackButton}
+        ParentShell={ParentShell}
+        PrimaryButton={PrimaryButton}
+      />
     );
   }
 
@@ -435,18 +435,7 @@ export default function ParentView() {
     );
   }
 
-  if (screen === "call-family") {
-    return (
-      <ComingSoonScreen
-        lang={lang}
-        title={t(lang, "callFamily")}
-        body={t(lang, "callFamilyBody")}
-        onBack={() => setScreen("home")}
-      />
-    );
-  }
-
-  const bannerText = t(lang, "newVoiceFromArjun");
+  const bannerText = t(lang, "newVoiceFromArjun", nameVars);
   const tiles = [
     {
       id: "okay",
@@ -457,7 +446,7 @@ export default function ParentView() {
     },
     {
       id: "send-money",
-      label: t(lang, "myPayments"),
+      label: t(lang, "sendMoney"),
       icon: IndianRupee,
       onClick: () => setScreen("send-money"),
     },
@@ -479,41 +468,52 @@ export default function ParentView() {
       icon: Bell,
       onClick: () => setScreen("reminders"),
     },
-    {
-      id: "call-family",
-      label: t(lang, "callFamily"),
-      icon: Phone,
-      onClick: () => setScreen("call-family"),
-    },
   ];
+
+  const actionTiles = tiles.filter((tile) => tile.id !== "okay");
 
   return (
     <ParentShell>
-      <h1 className="mt-2 text-[32px] font-bold leading-tight wrap-break-word text-teal sm:text-[40px]">
-        {t(lang, "greeting")}
-      </h1>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-[28px] font-bold leading-tight wrap-break-word text-teal">
+            {t(lang, "greeting", nameVars)}
+          </h1>
+          <p className="mt-1 text-[24px] leading-snug text-teal-dark">
+            {lastCheckIn
+              ? t(lang, "checkedIn")
+              : voiceSupported
+                ? listening
+                  ? t(lang, "listening")
+                  : t(lang, "checkInHint")
+                : t(lang, "voiceUnsupported")}
+          </p>
+        </div>
+      </div>
       {newestUnheardFamilyMessage ? (
-        <div className="mt-6 rounded-2xl bg-yellow-100 p-4 text-yellow-950">
-          <p className="text-[26px] font-bold">{bannerText}</p>
-          <SpeakAgainButton lang={lang} text={bannerText} />
-          <div className="mt-3">
+        <div className="mt-3 rounded-2xl bg-yellow-100 px-3 py-3 text-yellow-950">
+          <p className="text-[22px] font-bold leading-snug">{bannerText}</p>
+          <div className="mt-2">
             <VoiceMessageList
               messages={[newestUnheardFamilyMessage]}
               viewer="parent"
-              senderNames={{ parent: "Amma", family: "Arjun" }}
+              senderNames={senderNames}
               largeControls
             />
           </div>
         </div>
       ) : null}
-      <p className="mt-6 text-[24px] leading-snug text-teal-dark">
-        {t(lang, "checkInHint")}
-      </p>
-      {lastCheckIn ? (
-        <p className="mt-4 text-[24px] text-teal">{t(lang, "checkedIn")}</p>
-      ) : null}
-      <div className="mt-6 grid grid-cols-2 gap-2">
-        {tiles.map((tile) => {
+      <button
+        type="button"
+        onClick={handleOkay}
+        aria-label={t(lang, "iAmOkay")}
+        className="mt-3 flex min-h-16 w-full items-center justify-center gap-3 rounded-2xl bg-teal px-4 text-[26px] font-bold text-cream"
+      >
+        <Heart className="size-7 shrink-0" aria-hidden="true" strokeWidth={2.25} />
+        {t(lang, "iAmOkay")}
+      </button>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        {actionTiles.map((tile) => {
           const Icon = tile.icon;
           return (
             <button
@@ -521,32 +521,21 @@ export default function ParentView() {
               type="button"
               onClick={tile.onClick}
               aria-label={tile.label}
-              className={`flex min-h-[140px] flex-col items-center justify-center gap-2 rounded-2xl px-3 py-4 text-center ${
-                tile.primary
-                  ? "bg-teal text-cream"
-                  : "border-4 border-teal bg-white text-teal"
-              }`}
+              className="flex min-h-16 items-center gap-3 rounded-2xl border-4 border-teal bg-white px-3 py-2.5 text-left text-teal"
             >
-              <Icon className="size-10 shrink-0" aria-hidden="true" strokeWidth={2.25} />
-              <span className="text-[26px] font-bold leading-tight wrap-break-word">
+              <Icon className="size-7 shrink-0" aria-hidden="true" strokeWidth={2.25} />
+              <span className="text-[24px] font-bold leading-tight wrap-break-word">
                 {tile.label}
               </span>
             </button>
           );
         })}
       </div>
-      <p className="mt-6 text-[24px] text-teal">
-        {voiceSupported
-          ? listening
-            ? t(lang, "listening")
-            : t(lang, "checkInHint")
-          : t(lang, "voiceUnsupported")}
-      </p>
     </ParentShell>
   );
 }
 
-function ParentShell({ children }) {
+function ParentShell({ children, pin = false }) {
   const { lang, signOutUser } = useGlobalState();
   const holdRef = useRef(0);
 
@@ -565,9 +554,9 @@ function ParentShell({ children }) {
   }
 
   return (
-    <div className="flex min-h-screen justify-center overflow-x-hidden bg-teal">
-      <div className="flex min-h-screen w-full max-w-107.5 min-w-0 flex-col bg-cream px-4 py-6 font-parent text-teal sm:px-6 sm:py-8">
-        <header className="mb-4 flex items-center justify-between gap-3">
+    <div className="flex h-dvh justify-center overflow-hidden bg-teal">
+      <div className="flex h-full w-full max-w-107.5 min-w-0 flex-col bg-cream px-4 py-3 font-parent text-teal sm:px-5 sm:py-4">
+        <header className="mb-2 flex shrink-0 items-center justify-between gap-3">
           <button
             type="button"
             onPointerDown={startHold}
@@ -579,9 +568,15 @@ function ParentShell({ children }) {
           >
             {t(lang, "appName")}
           </button>
-          <LanguageToggle />
+          <LanguageToggle compact />
         </header>
-        {children}
+        <div
+          className={`flex min-h-0 flex-1 flex-col ${
+            pin ? "overflow-hidden" : "overflow-y-auto"
+          }`}
+        >
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -592,7 +587,7 @@ function BackButton({ lang, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-2 self-start rounded-xl border-2 border-teal px-4 py-2 text-[24px] font-bold"
+      className="inline-flex min-h-11 items-center gap-2 self-start rounded-xl border-2 border-teal px-3 py-1.5 text-[24px] font-bold"
       aria-label={t(lang, "backHome")}
     >
       <ArrowLeft className="size-6" aria-hidden="true" />
@@ -601,26 +596,13 @@ function BackButton({ lang, onClick }) {
   );
 }
 
-function ComingSoonScreen({ lang, title, body, onBack }) {
-  return (
-    <ParentShell>
-      <BackButton lang={lang} onClick={onBack} />
-      <h1 className="mt-6 text-[32px] font-bold leading-tight wrap-break-word text-teal">
-        {title}
-      </h1>
-      <p className="mt-3 text-[24px] leading-snug text-teal-dark">{t(lang, "comingSoon")}</p>
-      <p className="mt-4 text-[24px] leading-snug wrap-break-word text-teal">{body}</p>
-    </ParentShell>
-  );
-}
-
-function PrimaryButton({ children, onClick, "aria-label": ariaLabel }) {
+function PrimaryButton({ children, onClick, "aria-label": ariaLabel, className = "" }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-label={ariaLabel}
-      className="mt-10 inline-flex min-h-22 w-full items-center justify-center gap-3 rounded-2xl bg-teal px-6 text-[32px] font-bold wrap-break-word text-cream"
+      className={`mt-4 inline-flex min-h-16 w-full shrink-0 items-center justify-center gap-3 rounded-2xl bg-teal px-4 text-[26px] font-bold wrap-break-word text-cream ${className}`}
     >
       {children}
     </button>

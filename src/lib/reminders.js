@@ -140,7 +140,7 @@ export function missedCount(reminders) {
 }
 
 export function missedMessage(parentName, reminder) {
-  const name = parentName || "Amma";
+  const name = parentName || "Parent";
   const time = formatClock(reminder.dueAt);
   const kind = reminder.type === "custom" && reminder.title
     ? reminder.title

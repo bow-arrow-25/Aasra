@@ -10,6 +10,7 @@ import {
   PhoneCall,
   RotateCcw,
   Settings,
+  Building2,
 } from "lucide-react";
 import { useGlobalState } from "./context/GlobalState";
 import { pendingCount } from "./lib/payments";
@@ -23,15 +24,25 @@ import PaymentsPage from "./components/family/PaymentsPage";
 import FamilyReminders from "./components/family/FamilyReminders";
 import FamilySettings from "./components/family/FamilySettings";
 import FamilyVoice from "./components/family/FamilyVoice";
+import CareHomePage from "./components/care/CareHomePage";
 import { BADGE, formatTime, liveStatus } from "./components/family/helpers";
 
-const NAV = [
+const FAMILY_NAV = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
   { id: "live-call", label: "Live Call", icon: PhoneCall },
   { id: "messages", label: "Messages", icon: MessageSquare },
   { id: "payments", label: "Payments", icon: IndianRupee },
   { id: "reminders", label: "Reminders", icon: Bell },
   { id: "voice", label: "Voice", icon: Mic },
+  { id: "settings", label: "Settings", icon: Settings },
+];
+
+const ORG_NAV = [
+  { id: "home", label: "Home", icon: Building2 },
+  { id: "overview", label: "Alerts", icon: LayoutDashboard },
+  { id: "live-call", label: "Live Call", icon: PhoneCall },
+  { id: "messages", label: "Messages", icon: MessageSquare },
+  { id: "reminders", label: "Reminders", icon: Bell },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -64,6 +75,8 @@ function NavBadge({ count }) {
 export default function ChildDashboard() {
   const {
     parentName,
+    orgName,
+    householdKind,
     lastCheckIn,
     events,
     messages,
@@ -76,7 +89,9 @@ export default function ChildDashboard() {
     resetDemo,
   } = useGlobalState();
   const { toast } = useToast();
-  const [tab, setTab] = useState("overview");
+  const isOrg = householdKind === "org";
+  const NAV = isOrg ? ORG_NAV : FAMILY_NAV;
+  const [tab, setTab] = useState(isOrg ? "home" : "overview");
   const [notifyPerm, setNotifyPerm] = useState(() =>
     notificationSupported() ? Notification.permission : "unsupported"
   );
@@ -106,6 +121,7 @@ export default function ChildDashboard() {
     reminders: missedCount(reminders),
     voice: unheardVoice,
     settings: 0,
+    home: 0,
   };
 
   useEffect(() => {
@@ -188,13 +204,15 @@ export default function ChildDashboard() {
   }
 
   return (
-    <div className="flex min-h-screen overflow-x-hidden bg-slate-50 text-slate-900">
-      <aside className="hidden w-60 shrink-0 flex-col gap-2 border-r border-slate-200 bg-white p-2 md:flex">
-        <div className="px-2 py-2">
-          <p className="text-sm font-semibold tracking-wide text-teal">Aasra</p>
-          <p className="text-xs text-slate-500">Family dashboard</p>
+    <div className="flux-dash flex min-h-screen overflow-x-hidden text-slate-900">
+      <aside className="hidden w-64 shrink-0 flex-col gap-2 bg-deep p-3 text-cream md:flex">
+        <div className="px-2 py-3">
+          <p className="text-xs font-bold tracking-[0.22em] text-aqua-200 uppercase">Aasra</p>
+          <p className="mt-1 font-display text-lg font-semibold">
+            {isOrg ? "Care desk" : "Family dashboard"}
+          </p>
         </div>
-        <nav className="flex flex-col gap-2" aria-label="Family sections">
+        <nav className="flex flex-col gap-1.5" aria-label="Family sections">
           {NAV.map((item) => {
             const Icon = item.icon;
             const selected = tab === item.id;
@@ -204,10 +222,10 @@ export default function ChildDashboard() {
                 type="button"
                 onClick={() => setTab(item.id)}
                 aria-current={selected ? "page" : undefined}
-                className={`flex items-center gap-2 rounded-2xl px-3 py-2 text-sm font-semibold ${
+                className={`flex items-center gap-2 rounded-2xl px-3 py-2.5 text-sm font-semibold ${
                   selected
-                    ? "bg-teal text-cream"
-                    : "text-slate-700 hover:bg-slate-50"
+                    ? "bg-teal text-cream shadow-lg shadow-black/20"
+                    : "text-aqua-100 hover:bg-white/10"
                 }`}
               >
                 <Icon className="size-4 shrink-0" aria-hidden="true" />
@@ -220,14 +238,15 @@ export default function ChildDashboard() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="border-b border-slate-200 bg-white px-2 py-2 sm:px-4">
+        <header className="border-b border-teal/10 bg-white/70 px-2 py-3 backdrop-blur-xl sm:px-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0">
               <p className="text-sm font-semibold tracking-wide text-teal">
-                {parentName}
+                {isOrg ? orgName || parentName : parentName}
               </p>
               <p className="text-xs text-slate-500">
-                Last check-in {formatTime(lastCheckIn)} · Pairing {roomCode || "------"} ·{" "}
+                Last check-in {formatTime(lastCheckIn)} · {isOrg ? "Home code" : "Pairing"}{" "}
+                {roomCode || "------"} ·{" "}
                 {syncMode === "firebase" ? "internet sync" : "same-browser demo"}
               </p>
             </div>
@@ -306,6 +325,7 @@ export default function ChildDashboard() {
         </header>
 
         <main className="min-w-0 flex-1 p-2 sm:p-4">
+          {tab === "home" ? <CareHomePage /> : null}
           {tab === "overview" ? <FamilyOverview /> : null}
           {tab === "live-call" ? <FamilyLiveCall /> : null}
           {tab === "messages" ? <FamilyMessages /> : null}

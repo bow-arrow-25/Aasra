@@ -27,6 +27,7 @@ export default function FamilyReminders() {
     updateReminder,
     deleteReminder,
     callAmmaNow,
+    parentName,
   } = useGlobalState();
   const [form, setForm] = useState(EMPTY_FORM);
   const [editingId, setEditingId] = useState("");
@@ -287,10 +288,10 @@ function ReminderGroup({
                       type="button"
                       onClick={onCall}
                       className="inline-flex items-center gap-1 rounded-lg bg-teal px-3 py-2 text-sm font-semibold text-cream"
-                      aria-label={`Call Amma about ${item.title}`}
+                      aria-label={`Call ${parentName} about ${item.title}`}
                     >
                       <PhoneCall className="size-4" aria-hidden="true" />
-                      Call Amma
+                      Call {parentName}
                     </button>
                   ) : null}
                   <button

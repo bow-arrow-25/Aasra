@@ -120,9 +120,24 @@ export const PHRASES = [
   },
 ];
 
+export const DEMO_SCAM_LINES = [
+  {
+    label: "CBI",
+    text: "This is Inspector Sharma from CBI. Do not cut this call.",
+  },
+  {
+    label: "Digital arrest",
+    text: "There is an arrest warrant. This is a digital arrest. Stay on the call.",
+  },
+  {
+    label: "OTP",
+    text: "Share the code. The OTP will come now. Read it to me.",
+  },
+];
+
 export const DIGITAL_ARREST_SCRIPT = [
   {
-    at: 2000,
+    at: 400,
     speaker: "caller",
     text: "This is Inspector Sharma from CBI. Do not cut this call.",
   },
@@ -194,6 +209,14 @@ export function stageFromScore(score) {
   return "normal";
 }
 
+export function phraseHits(text) {
+  const blob = String(text || "");
+  if (!blob.trim()) return [];
+  return PHRASES.filter((phrase) =>
+    phrase.patterns.some((pattern) => pattern.test(blob))
+  ).map((phrase) => phrase.id);
+}
+
 export function analyzeTranscript(lines = []) {
   const blob = (Array.isArray(lines) ? lines : [lines]).map(lineText).join(" \n ");
   const matched = [];
@@ -241,9 +264,9 @@ export function emptyAnalysis() {
   return { riskScore: 0, matchedPhrases: [], stage: "normal" };
 }
 
-export function speakerLabel(speaker) {
+export function speakerLabel(speaker, parentName = "Parent") {
   if (speaker === "caller") return "Caller";
-  if (speaker === "amma") return "Amma";
+  if (speaker === "amma" || speaker === "parent") return parentName || "Parent";
   return "Heard";
 }
 

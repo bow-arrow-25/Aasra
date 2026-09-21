@@ -1,6 +1,7 @@
 import { Copy, LogOut, Settings } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useGlobalState } from "../../context/GlobalState";
+import { primaryFamilyName } from "../../lib/payments";
 
 export default function FamilySettings() {
   const {
@@ -10,10 +11,24 @@ export default function FamilySettings() {
     roomCode,
     authEmail,
     safePayees,
+    familyMembers,
     signOutUser,
     syncMode,
+    updateHouseholdNames,
   } = useGlobalState();
   const [copied, setCopied] = useState(false);
+  const [elderName, setElderName] = useState(parentName || "");
+  const [primaryName, setPrimaryName] = useState(primaryFamilyName(familyMembers));
+  const [backupName, setBackupName] = useState(
+    familyMembers.find((member) => member.role === "backup")?.name || ""
+  );
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setElderName(parentName || "");
+    setPrimaryName(primaryFamilyName(familyMembers));
+    setBackupName(familyMembers.find((member) => member.role === "backup")?.name || "");
+  }, [parentName, familyMembers]);
 
   async function copyCode() {
     try {
@@ -25,46 +40,88 @@ export default function FamilySettings() {
     }
   }
 
+  async function handleSave(event) {
+    event.preventDefault();
+    await updateHouseholdNames({
+      elderName,
+      primaryName,
+      backupName,
+    });
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 2000);
+  }
+
   return (
     <div className="grid gap-2">
-      <section className="rounded-2xl bg-white p-4 shadow-sm">
+      <section className="flux-card p-5">
         <h2 className="flex items-center gap-2 text-lg font-semibold">
           <Settings className="size-5 text-teal" aria-hidden="true" />
           Household
         </h2>
-        <dl className="mt-4 grid gap-2 text-sm">
-          <div className="flex justify-between gap-2">
-            <dt className="text-slate-500">Elder</dt>
-            <dd className="font-semibold">
-              {parentName}
-              {elderAge ? ` · ${elderAge}` : ""}
-            </dd>
-          </div>
+        <form onSubmit={handleSave} className="mt-4 grid gap-3 text-sm">
+          <label className="grid gap-1">
+            <span className="text-slate-500">Elder</span>
+            <input
+              value={elderName}
+              onChange={(event) => setElderName(event.target.value)}
+              className="rounded-xl border border-slate-300 px-3 py-2 font-semibold"
+              required
+            />
+          </label>
+          <label className="grid gap-1">
+            <span className="text-slate-500">Family member on payments</span>
+            <input
+              value={primaryName}
+              onChange={(event) => setPrimaryName(event.target.value)}
+              className="rounded-xl border border-slate-300 px-3 py-2 font-semibold"
+              required
+            />
+          </label>
+          <label className="grid gap-1">
+            <span className="text-slate-500">Backup family member</span>
+            <input
+              value={backupName}
+              onChange={(event) => setBackupName(event.target.value)}
+              className="rounded-xl border border-slate-300 px-3 py-2 font-semibold"
+            />
+          </label>
           {elderCity ? (
             <div className="flex justify-between gap-2">
               <dt className="text-slate-500">City</dt>
               <dd className="font-semibold">{elderCity}</dd>
             </div>
           ) : null}
+          {elderAge ? (
+            <div className="flex justify-between gap-2">
+              <span className="text-slate-500">Age</span>
+              <span className="font-semibold">{elderAge}</span>
+            </div>
+          ) : null}
           {authEmail ? (
             <div className="flex justify-between gap-2">
-              <dt className="text-slate-500">Signed in</dt>
-              <dd className="font-semibold wrap-break-word">{authEmail}</dd>
+              <span className="text-slate-500">Signed in</span>
+              <span className="font-semibold wrap-break-word">{authEmail}</span>
             </div>
           ) : null}
           <div className="flex justify-between gap-2">
-            <dt className="text-slate-500">Sync</dt>
-            <dd className="font-semibold">
+            <span className="text-slate-500">Sync</span>
+            <span className="font-semibold">
               {syncMode === "firebase" ? "Internet" : "Same-browser demo"}
-            </dd>
+            </span>
           </div>
-        </dl>
+          <button
+            type="submit"
+            className="mt-1 inline-flex items-center justify-center rounded-xl bg-teal px-4 py-2 font-semibold text-cream"
+          >
+            {saved ? "Names saved" : "Save names"}
+          </button>
+        </form>
       </section>
 
-      <section className="rounded-2xl bg-white p-4 shadow-sm">
+      <section className="flux-card p-5">
         <h2 className="text-lg font-semibold">Elder pairing code</h2>
         <p className="mt-2 text-sm text-slate-600">
-          Type these 6 numbers on Amma’s phone the first time.
+          Type these 6 numbers on {parentName || "the parent"}’s phone the first time.
         </p>
         <p className="mt-4 text-center text-3xl font-bold tracking-[0.3em] text-teal">
           {roomCode || "------"}
@@ -79,7 +136,7 @@ export default function FamilySettings() {
         </button>
       </section>
 
-      <section className="rounded-2xl bg-white p-4 shadow-sm">
+      <section className="flux-card p-5">
         <h2 className="text-lg font-semibold">Safe payees</h2>
         <ul className="mt-2 space-y-2">
           {safePayees.map((payee) => (

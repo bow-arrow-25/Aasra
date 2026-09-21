@@ -1,16 +1,20 @@
 import { useEffect, useState } from "react";
-import { LayoutDashboard, Smartphone } from "lucide-react";
 import { GlobalStateProvider, useGlobalState } from "./context/GlobalState";
 import ParentView from "./ParentView";
 import ChildDashboard from "./ChildDashboard";
+import CallAnalyzerRuntime from "./components/CallAnalyzerRuntime";
+import LiveVoiceRuntime from "./components/LiveVoiceRuntime";
 import PaymentToasts from "./components/PaymentToasts";
 import SimulationPanel from "./components/SimulationPanel";
 import { ToastProvider } from "./components/Toast";
-import DemoButtons from "./components/auth/DemoButtons";
 import ElderLogin from "./components/auth/ElderLogin";
 import FamilyLogin from "./components/auth/FamilyLogin";
 import FamilySetup from "./components/auth/FamilySetup";
+import OrgSetup from "./components/auth/OrgSetup";
+import WelcomeSplash from "./components/auth/WelcomeSplash";
 import ParentShareResult from "./components/parent/ParentShareResult";
+import AasraMark from "./components/ui/AasraMark";
+import WaterFluxBackdrop from "./components/ui/WaterFluxBackdrop";
 import {
   captureIncomingShare,
   clearShareUrl,
@@ -43,39 +47,12 @@ function useHashRoute() {
 
 function AuthLoading() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-cream">
-      <p className="font-parent text-[28px] font-bold text-teal">Aasra</p>
-    </div>
-  );
-}
-
-function HomeChooser() {
-  return (
-    <div className="flex min-h-screen items-center justify-center overflow-x-hidden bg-cream px-4 sm:px-6">
-      <div className="w-full max-w-md min-w-0 text-center">
-        <p className="font-parent text-[24px] text-teal">Aasra</p>
-        <h1 className="mt-2 font-parent text-[32px] font-bold leading-tight wrap-break-word text-teal sm:text-[40px]">
-          Family scam-shield
-        </h1>
-        <div className="mt-10 grid gap-4">
-          <a
-            href="#/parent"
-            className="inline-flex items-center justify-center gap-3 rounded-2xl bg-teal px-6 py-6 font-parent text-[28px] font-bold wrap-break-word text-cream"
-          >
-            <Smartphone className="size-8 shrink-0" aria-hidden="true" />
-            Parent phone
-          </a>
-          <a
-            href="#/child"
-            className="inline-flex items-center justify-center gap-3 rounded-2xl border-4 border-teal px-6 py-6 font-parent text-[28px] font-bold wrap-break-word text-teal"
-          >
-            <LayoutDashboard className="size-8 shrink-0" aria-hidden="true" />
-            Family dashboard
-          </a>
-        </div>
-        <DemoButtons variant="parent" />
+    <WaterFluxBackdrop>
+      <div className="flex min-h-screen flex-col items-center justify-center">
+        <AasraMark size={88} />
+        <p className="mt-5 font-display text-5xl font-extrabold tracking-tight text-cream">Aasra</p>
       </div>
-    </div>
+    </WaterFluxBackdrop>
   );
 }
 
@@ -91,19 +68,26 @@ function ShareShell({ children }) {
 
 function RoutedApp() {
   const route = useHashRoute();
+  const [entry, setEntry] = useState("splash");
   const {
     roomCode,
     householdId,
     role,
     authReady,
     needsSetup,
+    setupKind,
+    needsRole,
     lang,
     pendingSms,
     boardReady,
     receiveSms,
     clearSmsWarning,
+    parentName,
+    chooseRole,
+    authEmail,
   } = useGlobalState();
-  const signedIn = Boolean((householdId || roomCode) && role);
+  const authenticated = Boolean(householdId || roomCode);
+  const signedIn = authenticated && Boolean(role) && !needsRole;
 
   useEffect(() => {
     if (!isShareRoute()) return;
@@ -117,13 +101,18 @@ function RoutedApp() {
     if (pendingSms?.shared) return;
     const body = peekStashedShareText();
     if (!body) return;
-    receiveSms({ sender: "Shared by Amma", body, shared: true });
-  }, [authReady, boardReady, householdId, roomCode, pendingSms?.shared, receiveSms]);
+    receiveSms({ sender: `Shared by ${parentName || "family"}`, body, shared: true });
+  }, [authReady, boardReady, householdId, roomCode, pendingSms?.shared, receiveSms, parentName]);
 
   function finishSharedSms() {
     clearStashedShareText();
     clearSmsWarning();
   }
+
+  useEffect(() => {
+    if (!authenticated || !needsRole) return;
+    chooseRole(authEmail ? "family" : "parent");
+  }, [authenticated, needsRole, authEmail, chooseRole]);
 
   useEffect(() => {
     if (!signedIn || needsSetup) return;
@@ -141,8 +130,10 @@ function RoutedApp() {
   return (
     <>
       <SimulationPanel />
+      <LiveVoiceRuntime />
+      <CallAnalyzerRuntime />
       <PaymentToasts />
-      {needsSetup ? <FamilySetup /> : null}
+      {needsSetup ? setupKind === "org" ? <OrgSetup /> : <FamilySetup /> : null}
       {!needsSetup && pendingSms?.shared && !signedIn ? (
         <ParentShareResult
           lang={lang}
@@ -151,16 +142,23 @@ function RoutedApp() {
           ParentShell={ShareShell}
         />
       ) : null}
+      {!needsSetup && authenticated && (needsRole || !role) ? <AuthLoading /> : null}
       {!needsSetup && signedIn && role === "family" ? <ChildDashboard /> : null}
       {!needsSetup && signedIn && role !== "family" ? <ParentView /> : null}
-      {!needsSetup && !signedIn && !pendingSms?.shared && route === "/parent" ? (
-        <ElderLogin />
-      ) : null}
-      {!needsSetup && !signedIn && !pendingSms?.shared && route === "/child" ? (
-        <FamilyLogin />
-      ) : null}
-      {!needsSetup && !signedIn && !pendingSms?.shared && route === "/" ? (
-        <HomeChooser />
+      {!needsSetup && !authenticated && !pendingSms?.shared ? (
+        entry === "parent" ? (
+          <ElderLogin onBack={() => setEntry("splash")} />
+        ) : entry === "family" ? (
+          <FamilyLogin onBack={() => setEntry("splash")} />
+        ) : entry === "org" ? (
+          <FamilyLogin variant="org" onBack={() => setEntry("splash")} />
+        ) : (
+          <WelcomeSplash
+            onParent={() => setEntry("parent")}
+            onFamily={() => setEntry("family")}
+            onOrg={() => setEntry("org")}
+          />
+        )
       ) : null}
     </>
   );

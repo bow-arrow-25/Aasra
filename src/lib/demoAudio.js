@@ -1,3 +1,82 @@
+let sharedCtx = null;
+
+function getSharedContext() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return null;
+  if (!sharedCtx) sharedCtx = new AudioContextClass();
+  return sharedCtx;
+}
+
+export function unlockAudio() {
+  const ctx = getSharedContext();
+  if (!ctx) return;
+  if (ctx.state === "suspended") {
+    ctx.resume().catch(() => {});
+  }
+}
+
+export function startPhoneRing() {
+  const ctx = getSharedContext();
+  if (!ctx) return () => {};
+  ctx.resume().catch(() => {});
+
+  let stopped = false;
+  const nodes = [];
+
+  function burst() {
+    if (stopped) return;
+    try {
+      const now = ctx.currentTime;
+      [
+        [0, 440],
+        [0, 480],
+        [0.55, 440],
+        [0.55, 480],
+      ].forEach(([offset, freq]) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, now + offset);
+        gain.gain.exponentialRampToValueAtTime(0.09, now + offset + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.4);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + offset);
+        osc.stop(now + offset + 0.42);
+        nodes.push(osc, gain);
+      });
+    } catch {
+      /* autoplay or unsupported */
+    }
+    try {
+      navigator.vibrate?.([400, 180, 400, 1400]);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  burst();
+  const timer = window.setInterval(burst, 2200);
+  return () => {
+    stopped = true;
+    window.clearInterval(timer);
+    nodes.forEach((node) => {
+      try {
+        if (typeof node.stop === "function") node.stop();
+        node.disconnect?.();
+      } catch {
+        /* ignore */
+      }
+    });
+    try {
+      navigator.vibrate?.(0);
+    } catch {
+      /* ignore */
+    }
+  };
+}
+
 export function silentWavDataUrl(durationSec = 2) {
   const sampleRate = 8000;
   const numSamples = Math.max(1, Math.floor(sampleRate * durationSec));

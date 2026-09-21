@@ -16,6 +16,7 @@ import {
   findDecisionTarget,
   isAwaitingFamily,
   PAYMENT_STATUS,
+  displayParentName,
   primaryFamilyName,
   statusFromRuleDecision,
   upsertPayment,
@@ -43,22 +44,33 @@ import {
   registerElderOnHousehold,
   seedDemoElderPin,
   signOutFirebase,
+  updateHouseholdProfile,
 } from "../lib/household";
+import {
+  emptyCareBoard,
+  normalizeCheckupTypes,
+  todayKey,
+  upsertDailyCheck,
+  upsertResident,
+} from "../lib/careHome";
 import { hashPin, randomSalt, verifyPin } from "../lib/pin";
 import {
-  DEFAULT_FAMILY_MEMBERS,
   DEMO_HOUSEHOLD_ID,
   DEMO_PAIRING_CODE,
   UNLOCK_KEY,
+  buildFamilyMembers,
   clearPinFailures,
   clearSessionKeys,
   loadElderDevice,
   lockRemainingMs,
+  readSavedProfile,
   readSession,
   recordPinFailure,
   saveElderDevice,
+  writeSavedProfile,
   writeSession,
 } from "../lib/session";
+import { evaluatePayment } from "../lib/rules";
 import { clearStashedShareText } from "../lib/shareTarget";
 
 const GlobalStateContext = createContext(null);
@@ -77,8 +89,10 @@ export function callAlarmMs(demoMode) {
   return demoMode ? 15_000 : 20 * 60 * 1000;
 }
 
+const savedProfile = readSavedProfile();
+
 const emptyBoard = {
-  parentName: "Amma",
+  parentName: savedProfile?.parentName || "",
   lastCheckIn: null,
   events: [],
   messages: [],
@@ -86,38 +100,56 @@ const emptyBoard = {
   spamSenders: [],
   spamCallers: [],
   pendingSms: null,
-  safePayees: ["Electricity Board", "Dr. Meera Clinic", "Airtel Recharge"],
-  knownPayees: [
-    "Electricity Board",
-    "Dr. Meera Clinic",
-    "Airtel Recharge",
-    "Ramesh (neighbour)",
-    "Milk Dairy",
-  ],
+  safePayees: savedProfile?.safePayees?.length
+    ? savedProfile.safePayees
+    : ["Electricity Board", "Dr. Meera Clinic", "Airtel Recharge"],
+  knownPayees: savedProfile?.knownPayees?.length
+    ? savedProfile.knownPayees
+    : [
+        "Electricity Board",
+        "Dr. Meera Clinic",
+        "Airtel Recharge",
+        "Ramesh (neighbour)",
+        "Milk Dairy",
+      ],
   activeCall: null,
   pendingPayment: null,
   payments: [],
-  familyMembers: DEFAULT_FAMILY_MEMBERS,
-  elderAge: null,
-  elderCity: "",
+  familyMembers: savedProfile?.familyMembers?.length
+    ? savedProfile.familyMembers
+    : [],
+  elderAge: savedProfile?.elderAge ?? null,
+  elderCity: savedProfile?.elderCity || "",
   reminders: [],
+  householdKind: savedProfile?.householdKind === "org" ? "org" : "family",
+  orgName: savedProfile?.orgName || "",
+  residents: savedProfile?.residents || [],
+  checkupTypes: savedProfile?.checkupTypes || [],
+  dailyChecks: savedProfile?.dailyChecks || [],
+  reviews: savedProfile?.reviews || [],
+  currentResidentId: savedProfile?.currentResidentId || "",
 };
 
 const hasSavedSession = Boolean(readSession("aasra-household") || readSession("aasra-room"));
 
 const initialState = {
   ...emptyBoard,
-  lang: "en",
-  demoMode: true,
+  lang: savedProfile?.lang === "te" || savedProfile?.lang === "hi" ? savedProfile.lang : "en",
+  demoMode: false,
   roomCode: readSession("aasra-room"),
   householdId: readSession("aasra-household"),
   role: readSession("aasra-role"),
   syncMode: hasFirebaseConfig() ? "firebase" : "broadcast",
   authReady: !hasFirebaseConfig(),
   needsSetup: false,
-  authEmail: "",
+  setupKind: "family",
+  needsRole: Boolean(hasSavedSession && !readSession("aasra-role")),
+  authEmail: readSession("aasra-email"),
   authUid: "",
   boardReady: !hasSavedSession,
+  profileLoaded: Boolean(
+    savedProfile?.parentName || (savedProfile?.familyMembers || []).length
+  ),
 };
 
 function createEvent({ level, kind, message, detail, meta }) {
@@ -172,10 +204,35 @@ function isSpamCaller(from, spamCallers = []) {
   });
 }
 
-function persistSession({ householdId, roomCode, role }) {
+function persistSession({ householdId, roomCode, role, email, board }) {
   writeSession("aasra-household", householdId || "");
   writeSession("aasra-room", roomCode || "");
   writeSession("aasra-role", role || "");
+  if (email) writeSession("aasra-email", email);
+  if (board) writeSavedProfile(board);
+}
+
+function profileFromState(state) {
+  return {
+    parentName: state.parentName,
+    familyMembers: state.familyMembers,
+    elderAge: state.elderAge,
+    elderCity: state.elderCity,
+    lang: state.lang,
+    safePayees: state.safePayees,
+    knownPayees: state.knownPayees,
+    householdKind: state.householdKind,
+    orgName: state.orgName,
+    residents: state.residents,
+    checkupTypes: state.checkupTypes,
+    dailyChecks: state.dailyChecks,
+    reviews: state.reviews,
+  };
+}
+
+function canAnnounceProfile(householdId) {
+  const id = String(householdId || "");
+  return id.includes("-") || id === DEMO_HOUSEHOLD_ID;
 }
 
 function reducer(state, action) {
@@ -184,6 +241,13 @@ function reducer(state, action) {
       return {
         ...state,
         lastCheckIn: action.time,
+        residents: action.residentId
+          ? (state.residents || []).map((resident) =>
+              resident.id === action.residentId
+                ? { ...resident, lastCheckIn: action.time }
+                : resident
+            )
+          : state.residents,
         events: [action.event, ...state.events],
       };
     case "ACKNOWLEDGE_EVENT":
@@ -422,6 +486,41 @@ function reducer(state, action) {
             ],
       };
     }
+    case "SET_PROFILE":
+      return {
+        ...state,
+        parentName: action.parentName ?? state.parentName,
+        familyMembers: action.familyMembers ?? state.familyMembers,
+        elderAge: action.elderAge ?? state.elderAge,
+        elderCity: action.elderCity ?? state.elderCity,
+        lang: action.lang ?? state.lang,
+        safePayees: action.safePayees ?? state.safePayees,
+        knownPayees: action.knownPayees ?? state.knownPayees,
+        householdKind: action.householdKind ?? state.householdKind,
+        orgName: action.orgName ?? state.orgName,
+        residents: action.residents ?? state.residents,
+        checkupTypes: action.checkupTypes ?? state.checkupTypes,
+        dailyChecks: action.dailyChecks ?? state.dailyChecks,
+        reviews: action.reviews ?? state.reviews,
+        profileLoaded: true,
+      };
+    case "ADD_RESIDENT":
+      return {
+        ...state,
+        residents: upsertResident(state.residents, action.resident),
+        currentResidentId: action.setCurrent ? action.resident.id : state.currentResidentId,
+        parentName: action.setCurrent ? action.resident.name : state.parentName,
+      };
+    case "SET_CARE_HOME":
+      return {
+        ...state,
+        householdKind: action.householdKind ?? state.householdKind,
+        orgName: action.orgName ?? state.orgName,
+        residents: action.residents ?? state.residents,
+        checkupTypes: action.checkupTypes ?? state.checkupTypes,
+        dailyChecks: action.dailyChecks ?? state.dailyChecks,
+        reviews: action.reviews ?? state.reviews,
+      };
     case "SET_LANG":
       return {
         ...state,
@@ -438,12 +537,26 @@ function reducer(state, action) {
         ...state,
         householdId: action.householdId ?? action.roomCode ?? state.householdId,
         roomCode: action.roomCode,
-        role: action.role,
+        role: action.role || "",
         syncMode: getSyncMode(),
         authReady: true,
         needsSetup: false,
+        needsRole: !action.role,
         boardReady: false,
+        authEmail: action.email ?? state.authEmail,
+        authUid: action.uid ?? state.authUid,
+        demoMode:
+          action.demoMode === undefined ? state.demoMode : Boolean(action.demoMode),
+        profileLoaded: action.board ? true : state.profileLoaded,
         ...(action.board || {}),
+      };
+    case "CHOOSE_ROLE":
+      return {
+        ...state,
+        role: action.role,
+        needsRole: false,
+        authReady: true,
+        needsSetup: false,
       };
     case "BOARD_READY":
       return {
@@ -468,27 +581,34 @@ function reducer(state, action) {
         ...state,
         authReady: true,
         needsSetup: true,
+        setupKind: action.setupKind === "org" ? "org" : "family",
         authEmail: action.email || "",
         authUid: action.uid || "",
         roomCode: "",
         householdId: "",
-        role: "family",
+        role: "",
+        needsRole: false,
         boardReady: true,
+        profileLoaded: false,
       };
     case "SIGN_OUT":
       return {
         ...emptyBoard,
         lang: state.lang,
-        demoMode: state.demoMode,
+        demoMode: false,
         syncMode: hasFirebaseConfig() ? "firebase" : "broadcast",
         roomCode: "",
         householdId: "",
         role: "",
         authReady: true,
         needsSetup: false,
+        needsRole: false,
         authEmail: "",
         authUid: "",
         boardReady: true,
+        profileLoaded: false,
+        setupKind: "family",
+        ...emptyCareBoard(),
       };
     case "RESET_DEMO":
     case "HYDRATE_RESET":
@@ -553,24 +673,32 @@ export function GlobalStateProvider({ children }) {
           dispatch({ type: "AUTH_READY" });
           return;
         }
-        if (current.householdId === record.householdId && current.role) {
+        if (current.householdId === record.householdId && (current.role || current.needsRole)) {
           dispatch({ type: "AUTH_READY" });
           return;
         }
         const household = await getHousehold(record.householdId);
-        const role = record.role === "elder" ? "parent" : "family";
+        const savedRole = readSession("aasra-role");
+        const role =
+          savedRole ||
+          (record.role === "elder" ? "parent" : "");
         const roomCode = household?.pairingCode || "";
         persistSession({
           householdId: record.householdId,
           roomCode,
           role,
+          email: user.email || current.authEmail,
+          board: householdToBoard(household || {}),
         });
         dispatch({
           type: "SET_SESSION",
           householdId: record.householdId,
           roomCode,
           role,
+          email: user.email || current.authEmail,
+          uid: user.uid,
           board: householdToBoard(household || {}),
+          demoMode: record.householdId === DEMO_HOUSEHOLD_ID,
         });
       } catch (error) {
         console.warn("Auth restore failed", error);
@@ -596,8 +724,37 @@ export function GlobalStateProvider({ children }) {
     );
     dispatch({ type: "SET_SYNC_MODE", syncMode: getSyncMode() });
     dispatch({ type: "BOARD_READY" });
+    writeSavedProfile(profileFromState(state));
+    if (canAnnounceProfile(state.householdId) && state.profileLoaded) {
+      publish({
+        type: "SET_PROFILE",
+        ...profileFromState(state),
+      });
+    }
     return stop;
   }, [state.householdId, state.roomCode]);
+
+  useEffect(() => {
+    if (!state.householdId && !state.roomCode) return;
+    writeSavedProfile(profileFromState(state));
+  }, [
+    state.householdId,
+    state.roomCode,
+    state.parentName,
+    state.familyMembers,
+    state.elderAge,
+    state.elderCity,
+    state.lang,
+    state.safePayees,
+    state.knownPayees,
+    state.householdKind,
+    state.orgName,
+    state.residents,
+    state.checkupTypes,
+    state.dailyChecks,
+    state.reviews,
+    state.currentResidentId,
+  ]);
 
   const actions = useMemo(
     () => {
@@ -618,52 +775,98 @@ export function GlobalStateProvider({ children }) {
         }
       }
 
-      function enterSession({ householdId, roomCode, role, board }) {
-        persistSession({ householdId, roomCode, role });
+      function enterSession({ householdId, roomCode, role, board, email, uid, demoMode }) {
+        persistSession({ householdId, roomCode, role, email, board });
         dispatch({
           type: "SET_SESSION",
           householdId,
           roomCode,
           role,
+          email,
+          uid,
           board,
+          demoMode,
+        });
+      }
+
+      function enterHousehold({ householdId, roomCode, board, email, uid, demoMode }) {
+        persistSession({ householdId, roomCode, role: "", email, board });
+        dispatch({
+          type: "SET_SESSION",
+          householdId,
+          roomCode,
+          role: "",
+          email,
+          uid,
+          board,
+          demoMode,
         });
       }
 
       return {
-        joinRoom(roomCode, role) {
+        async joinRoom(roomCode) {
           const code = String(roomCode || "").replace(/\D/g, "").slice(0, 6);
           if (code.length !== 6) return;
-          enterSession({
-            householdId: code,
+          let householdId = code;
+          let board;
+          try {
+            const lookedUp = await lookupHouseholdIdByCode(code);
+            if (lookedUp) {
+              householdId = lookedUp;
+              const household = await getHousehold(lookedUp);
+              if (household) board = householdToBoard(household);
+            }
+          } catch {
+            /* join the pairing code even if lookup is offline */
+          }
+          enterHousehold({
+            householdId,
             roomCode: code,
-            role,
+            board,
+            demoMode: householdId === DEMO_HOUSEHOLD_ID,
           });
         },
         createFamilyRoom() {
           const code = createRoomCode();
-          enterSession({
+          enterHousehold({
             householdId: code,
             roomCode: code,
-            role: "family",
           });
           return code;
         },
-        async signUpFamily(email, password) {
+        chooseRole(role) {
+          const next = role === "parent" ? "parent" : "family";
+          const current = stateRef.current;
+          persistSession({
+            householdId: current.householdId,
+            roomCode: current.roomCode,
+            role: next,
+            email: current.authEmail,
+            board: profileFromState(current),
+          });
+          if (next === "parent") writeSession(UNLOCK_KEY, "1");
+          dispatch({ type: "CHOOSE_ROLE", role: next });
+        },
+        async signUpFamily(email, password, { kind = "family" } = {}) {
           const user = await familySignUp(email, password);
+          writeSession("aasra-email", user.email || email);
           dispatch({
             type: "NEED_SETUP",
             email: user.email || email,
             uid: user.uid,
+            setupKind: kind === "org" ? "org" : "family",
           });
         },
-        async signInFamily(email, password) {
+        async signInFamily(email, password, { kind = "family" } = {}) {
           const user = await familySignIn(email, password);
           const record = await getUserRecord(user.uid);
           if (!record?.householdId) {
+            writeSession("aasra-email", user.email || email);
             dispatch({
               type: "NEED_SETUP",
               email: user.email || email,
               uid: user.uid,
+              setupKind: kind === "org" ? "org" : "family",
             });
             return;
           }
@@ -672,80 +875,156 @@ export function GlobalStateProvider({ children }) {
             householdId: record.householdId,
             roomCode: household?.pairingCode || "",
             role: "family",
+            email: user.email || email,
+            uid: user.uid,
             board: householdToBoard(household || {}),
+            demoMode: record.householdId === DEMO_HOUSEHOLD_ID,
           });
         },
-        async completeFamilySetup({ elderName, age, city, lang, safeList }) {
+        async completeFamilySetup({
+          elderName,
+          age,
+          city,
+          lang,
+          safeList,
+          primaryName,
+          backupName,
+        }) {
           const uid = stateRef.current.authUid;
           if (!uid) throw new Error("Sign in first, then finish setup.");
           const safePayees = String(safeList || "")
             .split(/[\n,]/)
             .map((item) => item.trim())
             .filter(Boolean);
+          const familyMembers = buildFamilyMembers(primaryName, backupName);
           const result = await createHouseholdForFamily({
             uid,
             email: stateRef.current.authEmail,
-            profile: { elderName, age, city, lang },
+            profile: { elderName, age, city, lang, familyMembers },
             safePayees,
           });
           enterSession({
             householdId: result.householdId,
             roomCode: result.pairingCode,
             role: "family",
+            email: stateRef.current.authEmail,
+            uid,
             board: householdToBoard(result.household),
+            demoMode: false,
           });
         },
-        async pairElder({ pairingCode, pin }) {
+        async completeOrgSetup({ orgName, staffName, city, checks }) {
+          const uid = stateRef.current.authUid;
+          if (!uid) throw new Error("Sign in first, then finish setup.");
+          const checkupTypes = normalizeCheckupTypes(
+            String(checks || "")
+              .split(/[\n,]/)
+              .map((label) => ({ id: crypto.randomUUID(), label: label.trim() }))
+              .filter((item) => item.label)
+          );
+          const familyMembers = buildFamilyMembers(staffName, "Night duty");
+          const result = await createHouseholdForFamily({
+            uid,
+            email: stateRef.current.authEmail,
+            kind: "org",
+            profile: {
+              orgName,
+              city,
+              lang: "en",
+              familyMembers,
+              checkupTypes,
+              residents: [],
+              dailyChecks: [],
+              reviews: [],
+            },
+            safePayees: [],
+          });
+          enterSession({
+            householdId: result.householdId,
+            roomCode: result.pairingCode,
+            role: "family",
+            email: stateRef.current.authEmail,
+            uid,
+            board: householdToBoard(result.household),
+            demoMode: false,
+          });
+        },
+        async pairElder({ pairingCode, pin, room = "", name = "" }) {
           const code = String(pairingCode || "").replace(/\D/g, "").slice(0, 6);
           const pinValue = String(pin || "").replace(/\D/g, "").slice(0, 4);
           if (code.length !== 6) throw new Error("Type all 6 numbers.");
           if (pinValue.length !== 4) throw new Error("Choose a 4-digit PIN.");
           const saltHex = randomSalt();
           const pinHash = await hashPin(pinValue, saltHex);
+          const householdId = await lookupHouseholdIdByCode(code);
+          if (!householdId) throw new Error("That family code was not found.");
+          const household = await getHousehold(householdId);
+          if (!household) throw new Error("That family code was not found.");
 
+          let uid = `elder-${crypto.randomUUID()}`;
           if (hasFirebaseConfig()) {
-            const user = await ensureAnonymousUser();
-            const householdId = await lookupHouseholdIdByCode(code);
-            if (!householdId) throw new Error("That family code was not found.");
-            const household = await getHousehold(householdId);
-            await registerElderOnHousehold({
-              uid: user.uid,
-              householdId,
-              pinHash,
-              pinSalt: saltHex,
-            });
-            saveElderDevice({
-              householdId,
-              pairingCode: code,
-              pinHash,
-              pinSalt: saltHex,
-              uid: user.uid,
-            });
-            writeSession(UNLOCK_KEY, "1");
-            clearPinFailures();
-            enterSession({
-              householdId,
-              roomCode: household?.pairingCode || code,
-              role: "parent",
-              board: householdToBoard(household || {}),
-            });
-            return;
+            try {
+              const user = await ensureAnonymousUser();
+              uid = user.uid;
+            } catch {
+              /* keep the local elder id */
+            }
           }
-
-          saveElderDevice({
-            householdId: code,
-            pairingCode: code,
+          await registerElderOnHousehold({
+            uid,
+            householdId,
             pinHash,
             pinSalt: saltHex,
-            uid: "offline-elder",
+          });
+          const board = householdToBoard(household);
+          const isOrg = board.householdKind === "org";
+          const roomValue = String(room || "").trim();
+          const residentName = String(name || "").trim();
+          if (isOrg && (!roomValue || !residentName)) {
+            throw new Error("Type your room number and name to join this care home.");
+          }
+          let residents = board.residents || [];
+          let resident = null;
+          if (isOrg) {
+            resident = {
+              id: crypto.randomUUID(),
+              name: residentName,
+              room: roomValue,
+              lastCheckIn: null,
+              joinedAt: Date.now(),
+            };
+            residents = upsertResident(residents, resident);
+            try {
+              await updateHouseholdProfile(householdId, { residents });
+            } catch {
+              /* roster still updates on this device */
+            }
+          }
+          saveElderDevice({
+            householdId,
+            pairingCode: household.pairingCode || code,
+            pinHash,
+            pinSalt: saltHex,
+            uid,
+            residentId: resident?.id || "",
           });
           writeSession(UNLOCK_KEY, "1");
           clearPinFailures();
           enterSession({
-            householdId: code,
-            roomCode: code,
+            householdId,
+            roomCode: household.pairingCode || code,
             role: "parent",
+            board: {
+              ...board,
+              residents,
+              parentName: resident?.name || board.parentName,
+              currentResidentId: resident?.id || "",
+            },
+            demoMode: householdId === DEMO_HOUSEHOLD_ID,
           });
+          if (resident) {
+            send({ type: "ADD_RESIDENT", resident });
+          }
         },
         async unlockElderWithPin(pin) {
           const wait = lockRemainingMs();
@@ -767,84 +1046,101 @@ export function GlobalStateProvider({ children }) {
           writeSession(UNLOCK_KEY, "1");
 
           if (hasFirebaseConfig()) {
-            const user = await ensureAnonymousUser();
-            await registerElderOnHousehold({
-              uid: user.uid,
-              householdId: device.householdId,
-              pinHash: device.pinHash,
-              pinSalt: device.pinSalt,
-            });
-            saveElderDevice({ ...device, uid: user.uid });
-            const household = await getHousehold(device.householdId);
-            enterSession({
-              householdId: device.householdId,
-              roomCode: device.pairingCode,
-              role: "parent",
-              board: householdToBoard(household || {}),
-            });
-            return;
+            try {
+              const user = await ensureAnonymousUser();
+              await registerElderOnHousehold({
+                uid: user.uid,
+                householdId: device.householdId,
+                pinHash: device.pinHash,
+                pinSalt: device.pinSalt,
+              });
+              saveElderDevice({ ...device, uid: user.uid });
+            } catch {
+              /* Auth is optional; the household still loads from the database. */
+            }
           }
-
+          const household = await getHousehold(device.householdId);
+          const board = household ? householdToBoard(household) : undefined;
+          const resident = board?.residents?.find((item) => item.id === device.residentId);
           enterSession({
             householdId: device.householdId,
-            roomCode: device.pairingCode,
+            roomCode: device.pairingCode || household?.pairingCode || "",
             role: "parent",
+            board: board
+              ? {
+                  ...board,
+                  parentName: resident?.name || board.parentName,
+                  currentResidentId: device.residentId || "",
+                }
+              : undefined,
+            demoMode: device.householdId === DEMO_HOUSEHOLD_ID,
           });
         },
         async startDemoFamily() {
-          if (hasFirebaseConfig()) {
-            const user = await ensureAnonymousUser();
-            const result = await ensureDemoHousehold(user.uid, "family");
-            enterSession({
-              householdId: result.householdId,
-              roomCode: result.pairingCode,
-              role: "family",
-              board: householdToBoard(result.household),
-            });
-            return;
-          }
+          const uid = hasFirebaseConfig()
+            ? (await ensureAnonymousUser().catch(() => ({ uid: "offline-family" }))).uid
+            : "offline-family";
+          const result = await ensureDemoHousehold(uid, "family");
           enterSession({
-            householdId: DEMO_HOUSEHOLD_ID,
-            roomCode: DEMO_PAIRING_CODE,
+            householdId: result.householdId,
+            roomCode: result.pairingCode,
             role: "family",
+            uid,
+            board: householdToBoard(result.household),
+            demoMode: true,
           });
         },
         async startDemoElder() {
           const seeded = await seedDemoElderPin();
-          if (hasFirebaseConfig()) {
-            const user = await ensureAnonymousUser();
-            const result = await ensureDemoHousehold(user.uid, "elder", seeded);
-            saveElderDevice({
-              householdId: result.householdId,
-              pairingCode: result.pairingCode,
-              pinHash: seeded.pinHash,
-              pinSalt: seeded.pinSalt,
-              uid: user.uid,
-            });
-            writeSession(UNLOCK_KEY, "1");
-            clearPinFailures();
-            enterSession({
-              householdId: result.householdId,
-              roomCode: result.pairingCode,
-              role: "parent",
-              board: householdToBoard(result.household),
-            });
-            return;
-          }
+          const uid = hasFirebaseConfig()
+            ? (await ensureAnonymousUser().catch(() => ({ uid: "offline-elder" }))).uid
+            : "offline-elder";
+          const result = await ensureDemoHousehold(uid, "elder", seeded);
           saveElderDevice({
-            householdId: DEMO_HOUSEHOLD_ID,
-            pairingCode: DEMO_PAIRING_CODE,
+            householdId: result.householdId,
+            pairingCode: result.pairingCode,
             pinHash: seeded.pinHash,
             pinSalt: seeded.pinSalt,
-            uid: "offline-elder",
+            uid,
           });
           writeSession(UNLOCK_KEY, "1");
           clearPinFailures();
           enterSession({
-            householdId: DEMO_HOUSEHOLD_ID,
-            roomCode: DEMO_PAIRING_CODE,
+            householdId: result.householdId,
+            roomCode: result.pairingCode,
             role: "parent",
+            board: householdToBoard(result.household),
+            demoMode: true,
           });
+        },
+        async updateHouseholdNames({ elderName, primaryName, backupName }) {
+          const current = stateRef.current;
+          const parentName = String(elderName || "").trim() || current.parentName;
+          const familyMembers = buildFamilyMembers(
+            primaryName || primaryFamilyName(current.familyMembers),
+            backupName ||
+              current.familyMembers.find((member) => member.role === "backup")?.name
+          );
+          send({
+            type: "SET_PROFILE",
+            parentName,
+            familyMembers,
+            elderAge: current.elderAge,
+            elderCity: current.elderCity,
+            lang: current.lang,
+            safePayees: current.safePayees,
+            knownPayees: current.knownPayees,
+          });
+          if (current.householdId) {
+            try {
+              await updateHouseholdProfile(current.householdId, {
+                elderName: parentName,
+                familyMembers,
+              });
+            } catch {
+              /* local names still apply */
+            }
+          }
         },
         async signOutUser() {
           clearSessionKeys();
@@ -857,7 +1153,8 @@ export function GlobalStateProvider({ children }) {
         },
         checkIn({ source = "tap", transcript = "" } = {}) {
           const time = Date.now();
-          const name = stateRef.current.parentName || "Amma";
+          const current = stateRef.current;
+          const name = displayParentName(current.parentName);
           const event = createEvent({
             level: LEVEL.INFO,
             kind: "CHECK_IN",
@@ -866,8 +1163,65 @@ export function GlobalStateProvider({ children }) {
               source === "voice"
                 ? `Voice: “${transcript}”`
                 : "Tapped I am okay",
+            meta: current.currentResidentId
+              ? { residentId: current.currentResidentId }
+              : undefined,
           });
-          send({ type: "CHECK_IN", time, event });
+          send({
+            type: "CHECK_IN",
+            time,
+            event,
+            residentId: current.currentResidentId || "",
+          });
+          if (current.householdId && current.currentResidentId) {
+            const residents = (current.residents || []).map((resident) =>
+              resident.id === current.currentResidentId
+                ? { ...resident, lastCheckIn: time }
+                : resident
+            );
+            updateHouseholdProfile(current.householdId, { residents }).catch(() => {});
+          }
+        },
+        toggleCheckup({ residentId, typeId, done }) {
+          const current = stateRef.current;
+          const next = upsertDailyCheck(current.dailyChecks, {
+            id: crypto.randomUUID(),
+            residentId,
+            typeId,
+            date: todayKey(),
+            done: Boolean(done),
+            at: Date.now(),
+          });
+          send({ type: "SET_CARE_HOME", dailyChecks: next });
+          if (current.householdId) {
+            updateHouseholdProfile(current.householdId, { dailyChecks: next }).catch(() => {});
+          }
+        },
+        addCheckupType(label) {
+          const current = stateRef.current;
+          const checkupTypes = normalizeCheckupTypes([
+            ...(current.checkupTypes || []),
+            { id: crypto.randomUUID(), label },
+          ]);
+          send({ type: "SET_CARE_HOME", checkupTypes });
+          if (current.householdId) {
+            updateHouseholdProfile(current.householdId, { checkupTypes }).catch(() => {});
+          }
+        },
+        addResidentReview({ residentId, text }) {
+          const current = stateRef.current;
+          const review = {
+            id: crypto.randomUUID(),
+            residentId,
+            text: String(text || "").trim(),
+            time: Date.now(),
+          };
+          if (!review.text) return;
+          const reviews = [review, ...(current.reviews || [])];
+          send({ type: "SET_CARE_HOME", reviews });
+          if (current.householdId) {
+            updateHouseholdProfile(current.householdId, { reviews }).catch(() => {});
+          }
         },
         acknowledgeEvent(id) {
           send({ type: "ACKNOWLEDGE_EVENT", id });
@@ -879,6 +1233,7 @@ export function GlobalStateProvider({ children }) {
           answered = false,
           analyzerMode = "live",
           speakCaller = false,
+          liveVoice = false,
           id,
           startedAt,
           fromPhone = false,
@@ -896,8 +1251,10 @@ export function GlobalStateProvider({ children }) {
           const isKyc = Boolean(kyc);
           const listedSpam = isSpamCaller(from, current.spamCallers);
           const isScam = Boolean(scam || isKyc || listedSpam);
+          const parentName = displayParentName(current.parentName);
           const now = startedAt || Date.now();
           const mode = analyzerMode === "scripted" ? "scripted" : "live";
+          const useLiveVoice = Boolean(liveVoice) && !fromPhone && mode !== "scripted";
           const call = {
             id: id || crypto.randomUUID(),
             from,
@@ -909,6 +1266,8 @@ export function GlobalStateProvider({ children }) {
             answeredAt: answered ? now : null,
             analyzerMode: mode,
             speakCaller: Boolean(speakCaller),
+            liveVoice: useLiveVoice,
+            callerClientId: getClientId(),
             producerClientId: answered ? getClientId() : null,
             transcript: [],
             analysis: emptyAnalysis(),
@@ -918,7 +1277,9 @@ export function GlobalStateProvider({ children }) {
             fromPhone: Boolean(fromPhone),
           };
           let kind = "CALL";
-          let message = fromPhone ? "Incoming call on Amma's phone" : "Incoming call";
+          let message = fromPhone
+            ? `Incoming call on ${parentName}'s phone`
+            : "Incoming call";
           let level = listedSpam ? LEVEL.CRITICAL : LEVEL.INFO;
           let callType = "Incoming call";
           if (isKyc && answered) {
@@ -934,7 +1295,7 @@ export function GlobalStateProvider({ children }) {
           } else if (isScam) {
             kind = "SCAM_CALL";
             message = listedSpam
-              ? "Flagged number is calling Amma"
+              ? `Flagged number is calling ${parentName}`
               : "Possible scam call";
             level = LEVEL.CRITICAL;
             callType = "Suspected scam call";
@@ -992,8 +1353,18 @@ export function GlobalStateProvider({ children }) {
             }))
             .filter((line) => line.text);
           if (!lines.length) return;
-          const seen = new Set((call.transcript || []).map((item) => item.id));
-          const unique = lines.filter((line) => !seen.has(line.id));
+          const seenIds = new Set((call.transcript || []).map((item) => item.id));
+          const seenText = new Set(
+            (call.transcript || []).map(
+              (item) => `${item.speaker || "heard"}:${String(item.text || "").trim().toLowerCase()}`
+            )
+          );
+          const unique = lines.filter((line) => {
+            const key = `${line.speaker}:${line.text.toLowerCase()}`;
+            if (seenIds.has(line.id) || seenText.has(key)) return false;
+            seenText.add(key);
+            return true;
+          });
           if (!unique.length) return;
           const analysis = analyzeTranscript([
             ...(call.transcript || []),
@@ -1046,7 +1417,7 @@ export function GlobalStateProvider({ children }) {
             const event = createEvent({
               level: risk >= 60 ? LEVEL.CRITICAL : LEVEL.WARN,
               kind: "FAMILY_CALL",
-              message: `${name} is calling Amma`,
+              message: `${name} is calling ${displayParentName(current.parentName)}`,
               detail: `Family called during a live call from ${current.activeCall.from}`,
               meta: {
                 phone: current.activeCall.from,
@@ -1063,6 +1434,7 @@ export function GlobalStateProvider({ children }) {
             scam: false,
             analyzerMode: mode,
             speakCaller: mode === "scripted" ? speakCaller : false,
+            liveVoice: mode === "live",
           });
         },
         markCallerSpam() {
@@ -1109,7 +1481,7 @@ export function GlobalStateProvider({ children }) {
             level: LEVEL.INFO,
             kind: "CALL_ENDED",
             message: "Call ended",
-            detail: "Parent hung up",
+            detail: "Call ended",
           });
           send({ type: "END_CALL", event });
         },
@@ -1127,7 +1499,7 @@ export function GlobalStateProvider({ children }) {
           const timeline = [
             {
               at: time,
-              actor: current.parentName || "Amma",
+              actor: displayParentName(current.parentName),
               label: `Payment of ₹${amount} to ${payee} was attempted`,
             },
           ];
@@ -1206,7 +1578,7 @@ export function GlobalStateProvider({ children }) {
               {
                 at: time,
                 actor: payee,
-                label: `${payee} asked ${current.parentName || "Amma"} to pay ₹${amount}`,
+                label: `${payee} asked ${displayParentName(current.parentName)} to pay ₹${amount}`,
               },
               {
                 at: time,
@@ -1240,8 +1612,8 @@ export function GlobalStateProvider({ children }) {
           if (!payment) return;
           const next = appendTimeline(payment, {
             at: Date.now(),
-            actor: current.parentName || "Amma",
-            label: `${current.parentName || "Amma"} asked family to decide.`,
+            actor: displayParentName(current.parentName),
+            label: `${displayParentName(current.parentName)} asked family to decide.`,
           });
           send({
             type: "DECIDE_PAYMENT",
@@ -1345,7 +1717,7 @@ export function GlobalStateProvider({ children }) {
             return;
           }
           const decidedAt = Date.now();
-          const decidedBy = current.parentName || "Amma";
+          const decidedBy = displayParentName(current.parentName);
           const next = appendTimeline(
             {
               ...payment,
@@ -1399,7 +1771,7 @@ export function GlobalStateProvider({ children }) {
             note: String(note || "").trim(),
             createdBy:
               stateRef.current.role === "parent"
-                ? stateRef.current.parentName || "Amma"
+                ? displayParentName(stateRef.current.parentName)
                 : primaryFamilyName(stateRef.current.familyMembers),
             status: REMINDER_STATUS.SCHEDULED,
             doneAt: null,
@@ -1446,7 +1818,7 @@ export function GlobalStateProvider({ children }) {
           const event = createEvent({
             level: LEVEL.INFO,
             kind: "REMINDER_DONE",
-            message: `${stateRef.current.parentName || "Amma"} finished a reminder`,
+            message: `${displayParentName(stateRef.current.parentName)} finished a reminder`,
             detail: current.title,
             meta: { reminderId: current.id, type: current.type },
           });
@@ -1517,7 +1889,7 @@ export function GlobalStateProvider({ children }) {
             time,
             heard: false,
           };
-          const name = stateRef.current.parentName || "Amma";
+          const name = displayParentName(stateRef.current.parentName);
           const event =
             from === "parent"
               ? createEvent({
@@ -1568,8 +1940,8 @@ export function GlobalStateProvider({ children }) {
                     : "Shared message looks suspicious"
                   : fromPhone
                     ? analysis.label === "SCAM"
-                      ? "SMS on Amma's phone looks like a scam"
-                      : "SMS on Amma's phone looks suspicious"
+                      ? `SMS on ${displayParentName(current.parentName)}'s phone looks like a scam`
+                      : `SMS on ${displayParentName(current.parentName)}'s phone looks suspicious`
                     : "Scam SMS blocked from view — do not reply or click",
                 detail: `${sender}: ${String(body).slice(0, 120)}`,
                 meta: {
@@ -1631,7 +2003,7 @@ export function GlobalStateProvider({ children }) {
           const event = createEvent({
             level: message.analysis?.label === "SCAM" ? LEVEL.WARN : LEVEL.WARN,
             kind: "SMS_ASK_FAMILY",
-            message: `${current.parentName || "Amma"} asked family to check an SMS`,
+            message: `${displayParentName(current.parentName)} asked family to check an SMS`,
             detail: `${message.sender}: ${String(message.body).slice(0, 120)}`,
             meta: {
               smsId: message.id,
@@ -1771,17 +2143,23 @@ export function GlobalStateProvider({ children }) {
   }, [state.role, actions]);
 
   useEffect(() => {
-    if (state.role !== "family" || !state.activeCall || state.activeCall.alarmed) {
+    const call = state.activeCall;
+    if (!state.role || !call || call.alarmed || !call.answered) {
       return undefined;
     }
-    const wait = Math.max(
-      0,
-      callAlarmMs(state.demoMode) - (Date.now() - state.activeCall.startedAt)
-    );
-    const timer = setTimeout(() => {
+    const started = Number(call.answeredAt || 0);
+    if (!started) return undefined;
+    const wait = callAlarmMs(state.demoMode) - (Date.now() - started);
+    if (wait > 0) {
+      const timer = setTimeout(() => {
+        actions.logCallAlarm();
+      }, wait);
+      return () => clearTimeout(timer);
+    }
+    if (Date.now() - started >= callAlarmMs(state.demoMode)) {
       actions.logCallAlarm();
-    }, wait);
-    return () => clearTimeout(timer);
+    }
+    return undefined;
   }, [state.activeCall, state.role, state.demoMode, actions]);
 
   useEffect(() => {
@@ -1824,6 +2202,6 @@ export function useGlobalState() {
   return value;
 }
 
-export function showDemoLoginButtons(demoMode) {
-  return Boolean(demoMode) || !hasFirebaseConfig();
+export function showDemoLoginButtons() {
+  return true;
 }

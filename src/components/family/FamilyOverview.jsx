@@ -70,7 +70,7 @@ export default function FamilyOverview() {
       </section>
 
       <div className="grid gap-2 lg:grid-cols-3">
-        <section className="rounded-2xl bg-white p-4 shadow-sm lg:col-span-1">
+        <section className="flux-card p-5 lg:col-span-1">
           <h2 className="text-lg font-semibold">Check-in</h2>
           <p className="mt-2 text-slate-600">{parentName}</p>
           <p
@@ -111,7 +111,7 @@ export default function FamilyOverview() {
           </ul>
         </section>
 
-        <section className="rounded-2xl bg-white p-4 shadow-sm lg:col-span-2">
+        <section className="flux-card p-5 lg:col-span-2">
           <h2 className="text-lg font-semibold">Alert feed</h2>
           {awaitingPayments.length > 0 ? (
             <div className="mt-2 grid gap-2">
@@ -228,7 +228,7 @@ export default function FamilyOverview() {
 
 function CounterCard({ icon: Icon, label, value, tone }) {
   return (
-    <article className="rounded-2xl bg-white p-4 shadow-sm">
+    <article className="flux-card p-5">
       <div className="flex items-center justify-between gap-2">
         <p className="text-sm font-semibold text-slate-500">{label}</p>
         <Icon className="size-4 text-slate-400" aria-hidden="true" />

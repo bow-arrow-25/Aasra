@@ -1,9 +1,14 @@
 import { useEffect, useRef } from "react";
 import { PhoneIncoming, PhoneOff, Volume2 } from "lucide-react";
-import CallAnalyzerRuntime from "../CallAnalyzerRuntime";
 import CallTimer from "../CallTimer";
+import { useLiveVoiceStatus } from "../LiveVoiceRuntime";
 import RiskMeter from "../RiskMeter";
+import ScamPhraseChips from "../ScamPhraseChips";
+import { useGlobalState } from "../../context/GlobalState";
+import { startPhoneRing, unlockAudio } from "../../lib/demoAudio";
 import { t } from "../../lib/i18n";
+import { primeLiveVoiceMic } from "../../lib/liveVoice";
+import { armSpeechListen } from "../../lib/speechListen";
 import { speak } from "../../lib/speak";
 
 function scamSpeech(lang) {
@@ -19,7 +24,7 @@ function SpeakAgainButton({ lang, text }) {
     <button
       type="button"
       onClick={() => speak(text, lang)}
-      className="mt-4 inline-flex min-h-14 items-center gap-2 self-start rounded-xl border-2 border-teal px-4 text-[24px] font-bold text-teal"
+      className="mt-3 inline-flex min-h-12 items-center gap-2 self-start rounded-xl border-2 border-teal px-3 text-[24px] font-bold text-teal"
       aria-label={t(lang, "hearAgain")}
     >
       <Volume2 className="size-6" aria-hidden="true" />
@@ -34,7 +39,7 @@ function HangUpButton({ lang, answered, onClick }) {
       type="button"
       onClick={onClick}
       aria-label={t(lang, "hangUp")}
-      className="mt-10 inline-flex min-h-22 w-full items-center justify-center gap-3 rounded-2xl bg-teal px-6 text-[32px] font-bold wrap-break-word text-cream"
+      className="mt-4 inline-flex min-h-16 w-full items-center justify-center gap-3 rounded-2xl bg-teal px-4 text-[26px] font-bold wrap-break-word text-cream"
     >
       <PhoneOff className="size-8" aria-hidden="true" />
       {answered ? t(lang, "hangUp") : t(lang, "declineCall")}
@@ -44,14 +49,23 @@ function HangUpButton({ lang, answered, onClick }) {
 
 export default function ParentCallOverlay({
   lang,
+  names,
   activeCall,
   answerCall,
   endCall,
   ParentShell,
 }) {
+  const { appendCallTranscript } = useGlobalState();
   const risk = activeCall.analysis?.riskScore ?? 0;
   const interrupt = Boolean(activeCall.answered && risk >= 60);
   const spokenRef = useRef("");
+  const voice = useLiveVoiceStatus();
+
+  useEffect(() => {
+    if (!activeCall?.liveVoice || activeCall.answered) return undefined;
+    unlockAudio();
+    return startPhoneRing();
+  }, [activeCall?.id, activeCall?.liveVoice, activeCall?.answered]);
 
   useEffect(() => {
     if (!activeCall?.id) return;
@@ -72,14 +86,13 @@ export default function ParentCallOverlay({
 
   useEffect(() => {
     if (!activeCall?.familyCalling || interrupt) return;
-    speak(t(lang, "familyCallingBanner"), lang);
-  }, [activeCall?.familyCalling, interrupt, lang]);
+    speak(t(lang, "familyCallingBanner", names), lang);
+  }, [activeCall?.familyCalling, interrupt, lang, names]);
 
   if (interrupt) {
     return (
       <div className="flex min-h-screen justify-center overflow-x-hidden bg-red-800">
         <div className="flex min-h-screen w-full max-w-107.5 min-w-0 flex-col px-4 py-6 font-parent text-white sm:px-6 sm:py-8">
-          <CallAnalyzerRuntime />
           <CallTimer
             startedAt={activeCall.answeredAt || activeCall.startedAt}
             className="text-center text-[40px] font-bold"
@@ -116,17 +129,21 @@ export default function ParentCallOverlay({
   if (activeCall.answered) {
     return (
       <ParentShell>
-        <CallAnalyzerRuntime />
-        <h1 className="text-[32px] font-bold leading-tight wrap-break-word text-teal">
+        <h1 className="text-[28px] font-bold leading-tight wrap-break-word text-teal">
           {t(lang, "inCallTitle")}
         </h1>
-        <p className="mt-3 text-[24px] wrap-break-word text-teal">{activeCall.from}</p>
+        <p className="mt-2 text-[24px] wrap-break-word text-teal">{activeCall.from}</p>
         <CallTimer
           startedAt={activeCall.answeredAt || activeCall.startedAt}
-          className="mt-6 text-center text-[40px] font-bold text-teal"
+          className="mt-3 text-center text-[36px] font-bold text-teal"
         />
-        <div className="mt-6">
-          <RiskMeter score={risk} size="lg" />
+        <div className="mt-3">
+          <RiskMeter
+            score={risk}
+            size="lg"
+            phrases={activeCall.analysis?.matchedPhrases}
+          />
+          <ScamPhraseChips large />
         </div>
         {activeCall.alarmed ? (
           <p
@@ -141,13 +158,21 @@ export default function ParentCallOverlay({
             className="mt-4 rounded-2xl bg-yellow-100 p-4 text-[24px] font-bold leading-snug text-yellow-950"
             role="status"
           >
-            {t(lang, "familyCallingBanner")}
+            {t(lang, "familyCallingBanner", names)}
           </p>
         ) : null}
         <p className="mt-4 text-[24px] text-teal">
-          {activeCall.analyzerMode === "scripted"
-            ? t(lang, "scriptedCallHint")
-            : t(lang, "listeningToCall")}
+          {activeCall.liveVoice
+            ? voice.state === "connected"
+              ? t(lang, "talkNow", names)
+              : voice.state === "denied"
+                ? t(lang, "voiceDenied")
+                : voice.state === "failed"
+                  ? t(lang, "voiceFailed")
+                  : t(lang, "voiceConnecting")
+            : activeCall.analyzerMode === "scripted"
+              ? t(lang, "scriptedCallHint")
+              : t(lang, "listeningToCall")}
         </p>
         <HangUpButton lang={lang} answered onClick={endCall} />
       </ParentShell>
@@ -172,14 +197,19 @@ export default function ParentCallOverlay({
 
   return (
     <ParentShell>
-      <h1 className="text-[32px] font-bold leading-tight wrap-break-word text-teal">
+      <h1 className="text-[28px] font-bold leading-tight wrap-break-word text-teal">
         {title}
       </h1>
-      <p className="mt-4 text-[24px] leading-snug wrap-break-word text-teal-dark">{body}</p>
-      <p className="mt-3 text-[24px] wrap-break-word text-teal">{activeCall.from}</p>
+      <p className="mt-3 text-[24px] leading-snug wrap-break-word text-teal-dark">{body}</p>
+      <p className="mt-2 text-[24px] wrap-break-word text-teal">{activeCall.from}</p>
       {activeCall.fromPhone ? (
         <p className="mt-4 rounded-2xl bg-yellow-100 p-4 text-[24px] leading-snug wrap-break-word text-yellow-950">
           {t(lang, "phoneAnswerHint")}
+        </p>
+      ) : null}
+      {activeCall.liveVoice ? (
+        <p className="mt-4 rounded-2xl bg-yellow-100 p-4 text-[24px] leading-snug wrap-break-word text-yellow-950">
+          {t(lang, "inAppCallHint", names)}
         </p>
       ) : null}
       {activeCall.scam || activeCall.kyc ? (
@@ -187,9 +217,22 @@ export default function ParentCallOverlay({
       ) : null}
       <button
         type="button"
-        onClick={answerCall}
+        onClick={async () => {
+          unlockAudio();
+          armSpeechListen(lang, (text) => {
+            appendCallTranscript({ speaker: "heard", text, time: Date.now() });
+          });
+          if (activeCall.liveVoice) {
+            try {
+              await primeLiveVoiceMic();
+            } catch {
+              /* LiveVoiceRuntime shows the mic error */
+            }
+          }
+          answerCall();
+        }}
         aria-label={t(lang, "answerCall")}
-        className="mt-10 inline-flex min-h-22 w-full items-center justify-center gap-3 rounded-2xl bg-teal px-6 text-[32px] font-bold wrap-break-word text-cream"
+        className="mt-4 inline-flex min-h-16 w-full items-center justify-center gap-3 rounded-2xl bg-teal px-4 text-[26px] font-bold wrap-break-word text-cream"
       >
         <PhoneIncoming className="size-8" aria-hidden="true" />
         {t(lang, "answerCall")}

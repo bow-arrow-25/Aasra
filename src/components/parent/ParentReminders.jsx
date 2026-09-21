@@ -21,19 +21,19 @@ export default function ParentReminders({
   return (
     <ParentShell>
       <BackButton lang={lang} onClick={onBack} />
-      <h1 className="mt-6 text-[32px] font-bold leading-tight wrap-break-word text-teal sm:text-[40px]">
+      <h1 className="mt-3 text-[28px] font-bold leading-tight wrap-break-word text-teal">
         {t(lang, "remindersTile")}
       </h1>
       {today.length === 0 ? (
-        <p className="mt-8 text-[28px] leading-snug text-teal">
+        <p className="mt-3 text-[24px] leading-snug text-teal">
           {t(lang, "reminderNoToday")}
         </p>
       ) : (
-        <ul className="mt-8 grid gap-4">
+        <ul className="mt-3 grid gap-2">
           {today.map((item) => (
             <li
               key={item.id}
-              className={`rounded-2xl border-4 px-4 py-5 ${
+              className={`rounded-2xl border-4 px-3 py-3 ${
                 item.status === "DUE"
                   ? "border-red-700 bg-red-50"
                   : item.status === "MISSED"

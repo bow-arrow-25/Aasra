@@ -6,14 +6,14 @@ const OPTIONS = [
   { id: "hi", label: "हि" },
 ];
 
-export default function LanguageToggle() {
+export default function LanguageToggle({ compact = false }) {
   const { lang, setLang } = useGlobalState();
 
   return (
     <div
       role="group"
       aria-label="Language"
-      className="flex flex-wrap gap-2"
+      className={`flex ${compact ? "gap-1" : "flex-wrap gap-2"}`}
     >
       {OPTIONS.map((option) => {
         const selected = lang === option.id;
@@ -23,7 +23,11 @@ export default function LanguageToggle() {
             type="button"
             onClick={() => setLang(option.id)}
             aria-pressed={selected}
-            className={`min-h-12 min-w-14 rounded-xl px-3 text-[24px] font-bold ${
+            className={`rounded-xl font-bold ${
+              compact
+                ? "min-h-10 min-w-11 px-2 text-[20px]"
+                : "min-h-12 min-w-14 px-3 text-[24px]"
+            } ${
               selected
                 ? "bg-teal text-cream"
                 : "border-2 border-teal bg-cream text-teal"

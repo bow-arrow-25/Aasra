@@ -5,11 +5,15 @@ import {
   speakerLabel,
   splitHighlighted,
 } from "../../lib/callAnalyzer";
-import CallAnalyzerRuntime from "../CallAnalyzerRuntime";
 import CallTimer from "../CallTimer";
+import { useLiveVoiceStatus } from "../LiveVoiceRuntime";
 import RiskMeter from "../RiskMeter";
+import ScamPhraseChips from "../ScamPhraseChips";
 import VoiceRecorder from "../VoiceRecorder";
+import { startSoftChime, unlockAudio } from "../../lib/demoAudio";
 import { t } from "../../lib/i18n";
+import { primeLiveVoiceMic } from "../../lib/liveVoice";
+import { armSpeechListen } from "../../lib/speechListen";
 
 export default function FamilyLiveCall() {
   const {
@@ -18,9 +22,12 @@ export default function FamilyLiveCall() {
     lang,
     startCall,
     callAmmaNow,
+    endCall,
     markCallerSpam,
     setCallAnalyzer,
+    appendCallTranscript,
   } = useGlobalState();
+  const voice = useLiveVoiceStatus();
   const [analyzerMode, setAnalyzerMode] = useState("live");
   const [speakCaller, setSpeakCaller] = useState(true);
   const [showVoice, setShowVoice] = useState(false);
@@ -28,6 +35,12 @@ export default function FamilyLiveCall() {
   useEffect(() => {
     if (activeCall?.fromPhone) setAnalyzerMode("live");
   }, [activeCall?.id, activeCall?.fromPhone]);
+
+  useEffect(() => {
+    if (!activeCall?.liveVoice || activeCall.answered) return undefined;
+    unlockAudio();
+    return startSoftChime(2000);
+  }, [activeCall?.id, activeCall?.liveVoice, activeCall?.answered]);
 
   function applyMode(nextMode) {
     setAnalyzerMode(nextMode);
@@ -37,6 +50,7 @@ export default function FamilyLiveCall() {
   }
 
   function startScriptedDemo() {
+    setAnalyzerMode("scripted");
     startCall({
       from: "Unknown +91 98XXX 11223",
       scam: true,
@@ -45,7 +59,26 @@ export default function FamilyLiveCall() {
     });
   }
 
-  function startLiveDemo() {
+  async function startFamilyVoiceCall() {
+    setAnalyzerMode("live");
+    unlockAudio();
+    armSpeechListen(lang, (text) => {
+      appendCallTranscript({ speaker: "heard", text, time: Date.now() });
+    });
+    try {
+      await primeLiveVoiceMic();
+    } catch {
+      /* LiveVoiceRuntime shows the mic error */
+    }
+    callAmmaNow({ analyzerMode: "live" });
+  }
+
+  function startLiveMicCall() {
+    setAnalyzerMode("live");
+    unlockAudio();
+    armSpeechListen(lang, (text) => {
+      appendCallTranscript({ speaker: "heard", text, time: Date.now() });
+    });
     startCall({
       from: "Unknown +91 98XXX 11223",
       scam: false,
@@ -56,15 +89,14 @@ export default function FamilyLiveCall() {
 
   return (
     <section className="grid gap-2">
-      <CallAnalyzerRuntime />
       <div className="rounded-2xl bg-white p-4 shadow-sm">
         <h2 className="flex items-center gap-2 text-lg font-semibold">
           <PhoneCall className="size-5 text-teal" aria-hidden="true" />
           Live Call
         </h2>
         <p className="mt-2 text-sm text-slate-600">
-          Watch {parentName}'s call. The analyser highlights digital-arrest
-          language and warns the family when risk crosses 60.
+          Call {parentName} inside Aasra. After they tap Answer and allow the
+          microphone, both phones can hear each other. This is not the Phone app.
         </p>
 
         <div className="mt-4 flex flex-wrap gap-2" role="group" aria-label="Analyser mode">
@@ -94,8 +126,8 @@ export default function FamilyLiveCall() {
           </label>
         ) : (
           <p className="mt-3 text-sm text-slate-500">
-            After Amma answers, this browser listens to speakerphone audio with
-            the Web Speech API.
+            Call {parentName} now uses live voice. The live-mic button is only for
+            speakerphone listening during a real Phone-app call.
           </p>
         )}
       </div>
@@ -103,8 +135,11 @@ export default function FamilyLiveCall() {
       {activeCall ? (
         <ActiveCallCard
           call={activeCall}
+          lang={lang}
           parentName={parentName}
-          onCallAmma={() => callAmmaNow({ analyzerMode: "live" })}
+          voice={voice}
+          onCallAmma={startFamilyVoiceCall}
+          onHangUp={endCall}
           onVoice={() => setShowVoice((value) => !value)}
           onSpam={markCallerSpam}
           showVoice={showVoice}
@@ -112,30 +147,26 @@ export default function FamilyLiveCall() {
       ) : (
         <div className="rounded-2xl bg-white p-4 shadow-sm">
           <p className="text-sm text-slate-600">
-            No live call. Start a demo or call {parentName} now.
+            Speak scam words after the call is answered — CBI, digital arrest, OTP.
+            The Safe so far bar should move by itself.
           </p>
-          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          <div className="mt-4 grid gap-2">
             <ActionButton
-              onClick={() => callAmmaNow({ analyzerMode: "live" })}
+              onClick={startFamilyVoiceCall}
               label={`Call ${parentName} now`}
             />
-            <ActionButton
-              onClick={() => setShowVoice((value) => !value)}
-              label="Send voice message"
-            />
-            {analyzerMode === "scripted" ? (
+            <div className="grid gap-2 sm:grid-cols-2">
               <ActionButton
-                onClick={startScriptedDemo}
-                label="Start 90s digital-arrest script"
-                tone="danger"
-              />
-            ) : (
-              <ActionButton
-                onClick={startLiveDemo}
+                onClick={startLiveMicCall}
                 label="Start live mic call"
                 tone="danger"
               />
-            )}
+              <ActionButton
+                onClick={startScriptedDemo}
+                label="90s script"
+                tone="danger"
+              />
+            </div>
           </div>
           {showVoice ? (
             <div className="mt-4 rounded-xl bg-slate-50 p-3">
@@ -148,16 +179,29 @@ export default function FamilyLiveCall() {
   );
 }
 
+function voiceCopy(lang, call, parentName, voice) {
+  if (!call.liveVoice) return null;
+  if (voice?.state === "connected") return t(lang, "voiceConnected");
+  if (voice?.state === "denied") return t(lang, "voiceDenied");
+  if (voice?.state === "failed") return t(lang, "voiceFailed");
+  if (call.answered) return t(lang, "voiceConnecting");
+  return t(lang, "waitingParentAnswer", { parent: parentName });
+}
+
 function ActiveCallCard({
   call,
+  lang,
   parentName,
+  voice,
   onCallAmma,
+  onHangUp,
   onVoice,
   onSpam,
   showVoice,
 }) {
   const analysis = call.analysis || { riskScore: 0, matchedPhrases: [], stage: "normal" };
   const lines = call.transcript || [];
+  const liveHint = voiceCopy(lang, call, parentName, voice);
 
   return (
     <div className="grid gap-2 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.2fr)]">
@@ -168,7 +212,7 @@ function ActiveCallCard({
         <p className="mt-1 text-lg font-semibold wrap-break-word">{call.from}</p>
         {call.fromPhone ? (
           <p className="mt-1 text-sm font-semibold text-teal">
-            Forwarded from Amma's phone
+            Forwarded from {parentName}'s phone
           </p>
         ) : null}
         <div className="mt-4">
@@ -181,22 +225,26 @@ function ActiveCallCard({
               className="mt-1 text-3xl font-bold tabular-nums text-teal"
             />
           ) : (
-            <>
-              <p className="mt-1 text-lg font-semibold text-slate-500">Ringing</p>
-              {call.fromPhone ? (
-                <p className="mt-2 text-sm text-slate-600">
-                  {t(lang, "waitingForAmmaAnswer")}
-                </p>
-              ) : null}
-            </>
+            <p className="mt-1 text-lg font-semibold text-slate-500">Ringing</p>
           )}
+          {liveHint ? (
+            <p className="mt-2 text-sm font-semibold text-teal">{liveHint}</p>
+          ) : !call.answered && call.fromPhone ? (
+            <p className="mt-2 text-sm text-slate-600">
+              {t(lang, "waitingForAmmaAnswer", { parent: parentName })}
+            </p>
+          ) : null}
         </div>
         <div className="mt-4">
-          <RiskMeter score={analysis.riskScore} />
+          <RiskMeter
+            score={analysis.riskScore}
+            phrases={analysis.matchedPhrases}
+          />
+          <ScamPhraseChips />
         </div>
-        {analysis.matchedPhrases.length ? (
-          <p className="mt-3 text-sm text-red-800">
-            Heard: {analysis.matchedPhrases.join(", ")}
+        {call.alarmed ? (
+          <p className="mt-3 rounded-xl bg-red-100 p-3 text-sm font-semibold text-red-900">
+            {t(lang, "callAlarmBanner")}
           </p>
         ) : null}
         {call.spam ? (
@@ -205,6 +253,7 @@ function ActiveCallCard({
           </p>
         ) : null}
         <div className="mt-4 grid gap-2">
+          <ActionButton onClick={onHangUp} label={t(lang, "hangUp")} tone="danger" />
           <ActionButton onClick={onCallAmma} label={`Call ${parentName} now`} />
           <ActionButton onClick={onVoice} label="Send voice message" />
           <ActionButton
@@ -225,11 +274,15 @@ function ActiveCallCard({
         <h3 className="text-lg font-semibold">Live transcript</h3>
         {lines.length === 0 ? (
           <p className="mt-3 text-sm text-slate-500">
-            {call.answered
-              ? call.analyzerMode === "scripted"
-                ? "Waiting for the scripted lines…"
-                : "Listening for speakerphone audio…"
-              : "Answer the call on Amma’s phone to start the analyser."}
+            {call.liveVoice
+              ? call.answered
+                ? "Voice is live. Talk on this phone."
+                : `Waiting for ${parentName} to answer on Aasra.`
+              : call.answered
+                ? call.analyzerMode === "scripted"
+                  ? "Waiting for the scripted lines…"
+                  : "Listening for speakerphone audio…"
+                : `Answer the call on ${parentName}’s phone to start the analyser.`}
           </p>
         ) : (
           <ul className="mt-3 max-h-112 space-y-2 overflow-y-auto">
@@ -245,7 +298,7 @@ function ActiveCallCard({
                 }`}
               >
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {speakerLabel(line.speaker)}
+                  {speakerLabel(line.speaker, parentName)}
                 </p>
                 <p className="mt-1 wrap-break-word leading-relaxed">
                   {splitHighlighted(line.text, analysis.matchedPhrases).map(
